@@ -1,5 +1,5 @@
 # genit
-The `gen` macro implements a small DSL that works like an anonymous proc but for templates.  It's more powerful than a template but less powerful than a macro, and can be used to inline, repetitive code. 
+The `gen` macro implements a small DSL that works like an inline proc but for templates which can be used to inline, repetitive code. 
 
 ---
 
