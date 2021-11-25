@@ -71,7 +71,7 @@ runnableExamples:
 ## Prepending ``str`` to the item identifier or named argument will convert the identifier to a string.
 runnableExamples:
   gen(l = Label, name, age):      # produces
-    var `it /l` = str_it & /str_l # var nameLabel = "nameLabel"
+    var `it /l` = it_str & /l_str # var nameLabel = "nameLabel"
                                   # var ageLabel = "ageLabel"
   doAssert nameLabel == "nameLabel"
   doAssert ageLabel == "ageLabel"
@@ -114,7 +114,7 @@ macro gen*(args: varargs[untyped]): untyped =
 
   # separate the named and unnamed arguments
   let namedPrefix = "/"
-  let stringifyPrefix = "str"
+  let stringifySuffix = "str"
   var lhs, rhs, items: seq[NimNode]
   var body = args[^1].copyNimTree
 
@@ -131,7 +131,7 @@ macro gen*(args: varargs[untyped]): untyped =
   
   # named args
   for i in 0 ..< lhs.len:
-    body = body.replace(nnkPrefix.newTree(ident(namedPrefix), ident(stringifyPrefix & lhs[i].repr)), newLit(rhs[i].repr))
+    body = body.replace(nnkPrefix.newTree(ident(namedPrefix), ident(lhs[i].repr & stringifySuffix)), newLit(rhs[i].repr))
     body = body.replace(@[ident(namedPrefix), ident(lhs[i].repr)], rhs[i])
 
   # unnamed args
@@ -141,7 +141,7 @@ macro gen*(args: varargs[untyped]): untyped =
     result = nnkStmtList.newTree
     var tlen = items[0].len
     var it = ident(itsName)
-    var sit = ident(stringifyPrefix & itsName)
+    var sit = ident(itsName & stringifySuffix)
     var it_index = ident(itsName & "_index")
     
     for index, item in items.pairs:
@@ -153,7 +153,7 @@ macro gen*(args: varargs[untyped]): untyped =
         expectKind item, nnkTupleConstr
         for i in 0..<tlen:
           let itn = ident(itsName & $i)
-          let sitn = ident(stringifyPrefix & itn.repr)
+          let sitn = ident(itn.repr & stringifySuffix)
           t = t.replace(sitn, newLit(item[i].repr))
           t = t.replace(itn, item[i])
       result.add quote do:

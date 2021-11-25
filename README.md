@@ -11,7 +11,7 @@ https://geekrelief.github.io/genit/
 ---
 ```nim
 gen red, green, blue:
-  const `it tag` = TM_STATIC_HASH("color_" & str_it)
+  const `it tag` = TM_STATIC_HASH("color_" & it_str)
 ```
 
 Produces:

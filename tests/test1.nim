@@ -37,7 +37,7 @@ test "unnamed args: it":
 test "renamed it":
   gen(it = this, a, b, c):
     redState1.`this Component` = 100 + this_index
-    var `s this` = str_this
+    var `s this` = this_str
   
   check redState1.aComponent == 100
   check redState1.bComponent == 101
@@ -78,7 +78,7 @@ test "tuples":
 
 test "counter and stringify":
   gen red, green, blue:
-    var it = (str_it, it_index)
+    var it = (it_str, it_index)
   
   check red == ("red", 0)
   check green == ("green", 1)
@@ -106,7 +106,7 @@ test "nested":
 
 test "stringify named":
   gen(l = Label, name, age):            # produces
-    var `it /l` = str_it & /str_l # var nameLabel = "nameLabel"
+    var `it /l` = it_str & /l_str # var nameLabel = "nameLabel"
                                   # var ageLabel = "ageLabel"
   check nameLabel == "nameLabel"
   check ageLabel == "ageLabel"
