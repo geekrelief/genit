@@ -13,10 +13,10 @@
 ##
 ## Named Arguments
 ## ---------------
-## Named arguments are substituted into the body when prepended with ``/``.
+## Named arguments are substituted into the body.
 runnableExamples:
   gen(r = Radial, c = Component): # produces: 
-    var `/r /c`: float            # var RadialComponent: float
+    var `r c`: float              # var RadialComponent: float
   doAssert typeof(RadialComponent) is float
 ##
 ## Unnamed Arguments
@@ -33,10 +33,10 @@ runnableExamples:
 ##
 ## Index
 ## -----
-## The index for unnamed arguments can be accessed by appending ``_index`` to the item identifier.
+## The index for unnamed arguments can be accessed using the ``%`` operator.
 runnableExamples:
   gen red, green, blue: # produces
-    var `it` = it_index # var red = 0
+    var it = %it        # var red = 0
                         # var green = 1
                         # var bluel = 2
   doAssert red == 0
@@ -55,11 +55,11 @@ runnableExamples:
 ##
 ## Tuple Arguments
 ## ---------------
-## Each unnamed argument can be a tuple, and its parts can be accessed with the item identifier and tuple index appended:
-## e.g ``it0``, ``it1``, .. , ``itn``.
+## Each unnamed argument can be a tuple, and its parts can be accessed by indexing like a regular tuple.
+## If the indexed tuple is an l-value, it must be surrounded by accent quotes to be legal Nim.
 runnableExamples:
   gen (first, 1), (second, 2), (third, 3): # produces:
-    var it0 = it1                          # var first = 1
+    var `it[0]` = it[1]                    # var first = 1
                                            # var second = 2
                                            # var third = 3
   doAssert first == 1
@@ -68,15 +68,16 @@ runnableExamples:
 ##
 ## Stringify
 ## ---------
-## Prepending ``str`` to the item identifier or named argument will convert the identifier to a string.
+## The ``$$``, stringify, operator turns an identifier into a string.
 runnableExamples:
-  gen(l = Label, name, age):      # produces
-    var `it /l` = it_str & /l_str # var nameLabel = "nameLabel"
-                                  # var ageLabel = "ageLabel"
+  gen(l = Label, name, age): # produces
+    var `it l` = $$it & $$l  # var nameLabel = "nameLabel"
+                             # var ageLabel = "ageLabel"
   doAssert nameLabel == "nameLabel"
   doAssert ageLabel == "ageLabel"
 
-import macros
+import std / [strutils, macros]
+
 # helper procs for gen
 proc find(curNode:NimNode, match: seq[NimNode], index: int = 0): bool =
   if curNode.len - index >= match.len:
@@ -91,14 +92,19 @@ proc replace(curNode: NimNode, match: NimNode, newNode: NimNode): NimNode =
   if curNode == match:
     return newNode
   else:
-    for i, c in curNode.pairs:
-      curNode[i] = c.replace(match, newNode)
+    if (curNode.kind == nnkCommand or curNode.kind == nnkCall) and (curNode[0].eqIdent("gen")):
+      # gen is nested, only process the body of the gen not its arguments
+      curNode[^1] = curNode[^1].replace(match, newNode)
+    else:
+      for i, c in curNode.pairs:
+        curNode[i] = c.replace(match, newNode)
 
     return curNode
 
 proc replace(curNode: NimNode, match: seq[NimNode], newNode: NimNode): NimNode =
   var i = 0
   result = curNode.copyNimNode
+  # process children
   while i < curNode.len:
     if find(curNode, match, i):
       result.add newNode
@@ -113,8 +119,8 @@ macro gen*(args: varargs[untyped]): untyped =
   expectKind args[^1], nnkStmtList
 
   # separate the named and unnamed arguments
-  let namedPrefix = "/"
-  let stringifySuffix = "str"
+  let stringifyOp = "$$"
+  let indexOp = "%"
   var lhs, rhs, items: seq[NimNode]
   var body = args[^1].copyNimTree
 
@@ -129,34 +135,40 @@ macro gen*(args: varargs[untyped]): untyped =
     else:
       items.add arg
   
-  # named args
-  for i in 0 ..< lhs.len:
-    body = body.replace(nnkPrefix.newTree(ident(namedPrefix), ident(lhs[i].repr & stringifySuffix)), newLit(rhs[i].repr))
-    body = body.replace(@[ident(namedPrefix), ident(lhs[i].repr)], rhs[i])
+  # process the body one statement at a time
+  result = nnkStmtList.newTree
 
-  # unnamed args
-  if items.len == 0:
-    result = body
-  else:
-    result = nnkStmtList.newTree
-    var tlen = items[0].len
-    var it = ident(itsName)
-    var sit = ident(itsName & stringifySuffix)
-    var it_index = ident(itsName & "_index")
-    
-    for index, item in items.pairs:
-      var t = body.copyNimTree
-      t = t.replace(sit, newLit(item.repr))
-      t = t.replace(it, item)
-      t = t.replace(it_index, newLit(index))
-      if tlen > 1:
-        expectKind item, nnkTupleConstr
-        for i in 0..<tlen:
-          let itn = ident(itsName & $i)
-          let sitn = ident(itn.repr & stringifySuffix)
-          t = t.replace(sitn, newLit(item[i].repr))
-          t = t.replace(itn, item[i])
-      result.add quote do:
-        `t`
+  for stmt in body:
+    var s = stmt
+
+    # named args
+    for i in 0 ..< lhs.len:
+      s = s.replace(nnkPrefix.newTree(ident(stringifyOp), ident(lhs[i].repr)), newLit(rhs[i].repr))
+      s = s.replace(ident(lhs[i].repr), rhs[i])
+
+    # unnamed args
+    if items.len == 0:
+      result.add s
+    else:
+      var tlen = items[0].len
+      var it = ident(itsName)
+      var sit = nnkPrefix.newTree(ident(stringifyOp), ident(itsName))
+      var it_index = nnkPrefix.newTree(ident(indexOp), ident(itsName))
+      
+      for index, item in items.pairs:
+        var t = s.copyNimTree
+        t = t.replace(sit, newLit(item.repr))
+        t = t.replace(it_index, newLit(index))
+        if tlen > 1:
+          expectKind item, nnkTupleConstr
+          for i in 0..<tlen:
+            let itn = nnkBracketExpr.newTree(ident(itsName), newLit(i)) # replace outside accented quote
+            let sitn = nnkPrefix.newTree(ident(stringifyOp), itn)
+            t = t.replace(sitn, newLit(item[i].repr))
+            t = t.replace(itn, item[i])
+            let aitn = @[ident(itsName), ident("["), ident($i), ident("]")] # replace inside accented quote
+            t = t.replace(aitn, item[i])
+        t = t.replace(it, item)
+        result.add t
 
   #echo result.repr

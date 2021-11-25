@@ -11,7 +11,7 @@ https://geekrelief.github.io/genit/
 ---
 ```nim
 gen red, green, blue:
-  const `it tag` = TM_STATIC_HASH("color_" & it_str)
+  const `it tag` = TM_STATIC_HASH("color_" & $$it)
 ```
 
 Produces:
@@ -24,12 +24,12 @@ const `blue tag` = TM_STATIC_HASH("color_" & "blue")
 ---
 ```nim
 gen(c = component):
-  s.`mover /c` = entity_api.`lookup /c type`(s.entity_ctx, `TM_TT_TYPE_HASH_PHYSX_MOVER /c`)
+  s.`mover c` = entity_api.`lookup c type`(s.entity_ctx, `TM_TT_TYPE_HASH_PHYSX_MOVER c`)
   gen physics_joint, physics_shape, physx_joint, physx_rigid_body, tag, transform:
-    s.`it /c` = entity_api.`lookup /c type`(s.entity_ctx, `TM_TT_TYPE_HASH it /c`)
+    s.`it c` = entity_api.`lookup c type`(s.entity_ctx, `TM_TT_TYPE_HASH it c`)
 
   gen(m = manager, (trans, transform), (tag, tag)):
-    s.`it0 man` = cast[ptr `tm it1 /c /m o`](entity_api.`/c /m`(s.entity_ctx, s.`it1 /c`))
+    s.`it[0] man` = cast[ptr `tm it[1] c m o`](entity_api.`c m`(s.entity_ctx, s.`it[1] c`))
 ```
 
 Produces:
