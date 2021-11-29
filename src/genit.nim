@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.2.0
+## :Version: 0.3.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -78,6 +78,18 @@ runnableExamples:
   doAssert ageLabel == "ageLabel"
 
 ##
+## Capitalize
+## ----------
+## The ``^`` operator will capitalize the first letter of an identifier.
+runnableExamples:
+  gen red, green, blue:
+    var `^it` = $$it
+  
+  doAssert Red == "red"
+  doAssert Green == "green"
+  doAssert Blue == "blue"
+
+##
 ## Special Constructs
 ## ------------------
 ## Some Nim constructs like ``case`` statements and type definitions: ``objects``, ``enum``, ``tuple``, etc.
@@ -119,6 +131,7 @@ import std / [strutils, macros]
 const genName = "gen"
 const stringifyOp = "$$"
 const indexOp = "%"
+const capOp = "^"
 
 # helper procs for gen
 proc find(curNode:NimNode, match: seq[NimNode], index: int = 0): bool =
@@ -177,10 +190,18 @@ proc hasIt(node: NimNode, it:NimNode): bool =
 proc replaceIt(parentNode:NimNode, curNode:NimNode, it:NimNode, items:seq[NimNode]) =
   if curNode.hasIt(it):
     let sit = nnkPrefix.newTree(ident(stringifyOp), it)
+    let cit = nnkPrefix.newTree(ident(capOp), it)
     let it_index = nnkPrefix.newTree(ident(indexOp), it)
     for index, item in items.pairs:
       var t = curNode.copyNimTree
       t = t.replace(sit, newLit(item.repr))
+
+      var citem = item.repr
+      citem[0] = citem[0].toUpperAscii
+      t = t.replace(cit, ident(citem))
+      let cait = @[ident(capOp), it] 
+      t = t.replace(cait, ident(citem))
+
       t = t.replace(it_index, newLit(index))
       var tlen = items[0].len
       if tlen > 1:
@@ -188,9 +209,17 @@ proc replaceIt(parentNode:NimNode, curNode:NimNode, it:NimNode, items:seq[NimNod
         for i in 0..<tlen:
           let itn = nnkBracketExpr.newTree(it, newLit(i)) # replace outside accented quote
           let sitn = nnkPrefix.newTree(ident(stringifyOp), itn)
+          let citn = nnkPrefix.newTree(ident(capOp), itn)
           t = t.replace(sitn, newLit(item[i].repr))
+          var citemn = item[i].repr
+          citemn[0] = citemn[0].toUpperAscii
+          t = t.replace(citn, ident(citemn))
           t = t.replace(itn, item[i])
-          let aitn = @[it, ident("["), ident($i), ident("]")] # replace inside accented quote
+
+          # replace inside accented quote
+          let caitn = @[ident(capOp), it, ident("["), ident($i), ident("]")] 
+          t = t.replace(caitn, ident(citemn))
+          let aitn = @[it, ident("["), ident($i), ident("]")]
           t = t.replace(aitn, item[i])
       t = t.replace(it, item)
       #echo "t: ", t.repr
@@ -265,8 +294,12 @@ macro gen*(args: varargs[untyped]): untyped =
 
     # named args
     for i in 0 ..< lhs.len:
-      s = s.replace(nnkPrefix.newTree(ident(stringifyOp), ident(lhs[i].repr)), newLit(rhs[i].repr))
-      s = s.replace(ident(lhs[i].repr), rhs[i])
+      var l = ident(lhs[i].repr)
+      s = s.replace(nnkPrefix.newTree(ident(stringifyOp), l), newLit(rhs[i].repr))
+      var capr = rhs[i].repr
+      capr[0] = capr[0].toUpperAscii()
+      s = s.replace(nnkPrefix.newTree(ident(capOp), l), newLit(capr))
+      s = s.replace(l, rhs[i])
     
     # unnamed args
     if items.len > 0:

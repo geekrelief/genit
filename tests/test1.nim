@@ -152,3 +152,10 @@ test "typedef object":
     var color = RGB(`red c`:1.0, `green c`:0.0, `blue c`:1.0)
 
   check color.redComponent == 1
+
+
+test "capitalize":
+  gen red, green, blue:
+    var `^it` = $$it
+  
+  check Red == "red"
