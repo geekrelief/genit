@@ -25,7 +25,6 @@ gen red, green, blue:
 gen red, green, blue:
   var `it State2`: State2
 
-
 test "unnamed args: it":
   check declared(redState1)
   check declared(greenState1)
@@ -47,16 +46,6 @@ test "renamed it":
   check sb == "b"
   check sc == "c"
 
-test "named args":
-  redState2.aComponent = 100
-  redState2.cComponent = 300
-
-  gen(r = redState, c = Component, a, c):
-    `r 1`.`it c` = `r 2`.`it c`
-  
-  check redState1.aComponent == 100
-  check redState1.cComponent == 300
-
 test "mixed named and unnamed args":
   greenState2.aComponent = 100 
   greenState2.cComponent = 300 
@@ -77,22 +66,20 @@ test "tuples":
   check greenState1.bComponent == 255
   check blueState1.cComponent == 255
 
-  gen (first, 1), (second, 2), (third, 3): # produces:
-    var `it[0]` = it[1]                          # var first = 1
-                                           # var second = 2
-                                           # var third = 3
+  gen (first, 1), (second, 2), (third, 3):
+    var `it[0]` = it[1] 
+
   check first == 1
   check second == 2
   check third == 3
 
-test "counter and stringify":
+test "stringify and index":
   gen red, green, blue:
     var it = ($$it, %it)
   
   check red == ("red", 0)
   check green == ("green", 1)
   check blue == ("blue", 2)
-
 
 test "nested":
   redState2.aComponent = 100
@@ -104,8 +91,8 @@ test "nested":
 
   gen(c = Component, s = State):
     gen(it = this, a, c):
-      gen red, green, blue:
-        `it s 1`.`this c` = `it s 2`.`this c` + %it + %this
+      gen(it = that, red, green, blue):
+        `that s 1`.`this c` = `that s 2`.`this c` + %that + %this
   
   check redState1.aComponent == 100
   check redState1.cComponent == 301
@@ -115,59 +102,53 @@ test "nested":
   check blueState1.cComponent == 303
 
 test "stringify named":
-  gen(l = Label, name, age):      # produces
-    var `it l` = $$it & $$l # var nameLabel = "nameLabel"
-                                  # var ageLabel = "ageLabel"
+  gen(l = Label, name, age):
+    var `it l` = $$it & $$l
   check nameLabel == "nameLabel"
   check ageLabel == "ageLabel"
 
 test "no args":
   gen:
     var foo = "bar"
-
   check foo == "bar"
 
-#[
 test "case":
-  type Color = enum
-    RedColor
-    GreenColor
-    BlueColor
-    NoColor
+  gen(c = Color):
+    type c = enum
+      `Red c`
+      `Green c`
+      `Blue c`
+      `No c`
 
-  var color1 = GreenColor
-  proc getColor(color: Color): (int, int, int) =
-    gen_case(color, c = Color, (Red, (255, 0, 0)), (Green, (0, 255, 0)), (Blue, (0, 0, 255))):
-    of `it0 /c`: it1
-    else: (0, 0, 0) 
+    var color1 = `Green c`
+    proc getColor(color: c): (int, int, int) =
+      gen (Red, (255, 0, 0)), (Green, (0, 255, 0)), (Blue, (0, 0, 255)):
+        case color:
+          of `it[0] c`: it[1]
+          else: (0, 0, 0) 
 
-  var index1 = getColor(color1)
-  check index1 == (0, 255, 0)
-  var index2 = getColor(NoColor)
-  check index2 == (0, 0, 0)
+    var index1 = getColor(color1)
+    check index1 == (0, 255, 0)
+    var index2 = getColor(`No c`)
+    check index2 == (0, 0, 0)
 
 
-test "general":
-
-  type Color = enum
-    RedColor
-    GreenColor
-    BlueColor
-    NoColor
-
-  var color1 = GreenColor
-  proc getColor(color: Color): (int, int, int) =
-    gen(c = Color, (Red, (255, 0, 0)), (Green, (0, 255, 0)), (Blue, (0, 0, 255))):
-      case color:
-        of `it0 /c`: it1
-        else: (0, 0, 0) 
-
-  var index1 = getColor(color1)
-  check index1 == (0, 255, 0)
-  var index2 = getColor(NoColor)
-  check index2 == (0, 0, 0)
-
+test "typedef enum":
   gen Free, Carried, FlyingUp, FlyingBack:
-    type BoxState = enum
-      `BoxState it`
-]#
+    type 
+      BoxState = enum
+        `BoxState it`
+      Verbs = enum
+        `it`
+  
+  check ord(BoxStateFlyingBack) == 3
+
+test "typedef object":
+  gen(c = Component, red, green, blue):
+    type
+      RGB = object
+        `it c`*: float
+
+    var color = RGB(`red c`:1.0, `green c`:0.0, `blue c`:1.0)
+
+  check color.redComponent == 1
