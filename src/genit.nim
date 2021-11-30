@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.3.0
+## :Version: 0.4.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -126,6 +126,22 @@ runnableExamples:
 
   doAssert color.redComponent == 1
 
+## Enum
+## ----
+## Iteration over enums can be done with ``enumGen``.
+runnableExamples:
+  type NumberColor = enum
+    none = -1
+    red = 1
+    green = 2
+    blue = 3
+
+  enumGen(NumberColor):
+    var `^it[0]` = ($$it[0], it[1])
+  
+  doAssert Red == ("red", 1)
+
+#----- implementation
 import std / [strutils, macros]
 
 const genName = "gen"
@@ -194,6 +210,28 @@ proc replaceIt(parentNode:NimNode, curNode:NimNode, it:NimNode, items:seq[NimNod
     let it_index = nnkPrefix.newTree(ident(indexOp), it)
     for index, item in items.pairs:
       var t = curNode.copyNimTree
+      var tlen = items[0].len
+      if tlen > 1:
+        # greedy match for tuple item index first
+        expectKind item, nnkTupleConstr
+        for i in 0..<tlen:
+          let itn = nnkBracketExpr.newTree(it, newLit(i)) # replace outside accented quote
+          let sitn = nnkPrefix.newTree(ident(stringifyOp), itn)
+          let citn = nnkPrefix.newTree(ident(capOp), itn)
+
+          t = t.replace(sitn, newLit(item[i].repr))
+          var citemn = item[i].repr
+          citemn[0] = citemn[0].toUpperAscii
+
+          # replace inside accented quote
+          let caitn = @[ident(capOp), it, ident("["), ident($i), ident("]")] 
+          t = t.replace(caitn, ident(citemn))
+          let aitn = @[it, ident("["), ident($i), ident("]")]
+          t = t.replace(aitn, item[i])
+
+          t = t.replace(citn, ident(citemn))
+          t = t.replace(itn, item[i])
+
       t = t.replace(sit, newLit(item.repr))
 
       var citem = item.repr
@@ -203,24 +241,6 @@ proc replaceIt(parentNode:NimNode, curNode:NimNode, it:NimNode, items:seq[NimNod
       t = t.replace(cait, ident(citem))
 
       t = t.replace(it_index, newLit(index))
-      var tlen = items[0].len
-      if tlen > 1:
-        expectKind item, nnkTupleConstr
-        for i in 0..<tlen:
-          let itn = nnkBracketExpr.newTree(it, newLit(i)) # replace outside accented quote
-          let sitn = nnkPrefix.newTree(ident(stringifyOp), itn)
-          let citn = nnkPrefix.newTree(ident(capOp), itn)
-          t = t.replace(sitn, newLit(item[i].repr))
-          var citemn = item[i].repr
-          citemn[0] = citemn[0].toUpperAscii
-          t = t.replace(citn, ident(citemn))
-          t = t.replace(itn, item[i])
-
-          # replace inside accented quote
-          let caitn = @[ident(capOp), it, ident("["), ident($i), ident("]")] 
-          t = t.replace(caitn, ident(citemn))
-          let aitn = @[it, ident("["), ident($i), ident("]")]
-          t = t.replace(aitn, item[i])
       t = t.replace(it, item)
       #echo "t: ", t.repr
       parentNode.add t
@@ -236,11 +256,31 @@ proc recurseIt(parentNode:NimNode, curNode:NimNode, it:NimNode, items:seq[NimNod
         case b.kind:
         of nnkOfBranch: replaceIt(caseNode, b, it, items)
         else: caseNode.add b.copyNimTree
-    of nnkVarSection:
+    of nnkVarSection, nnkLetSection, nnkConstSection:
       var section = curNode.copyNimNode
       parentNode.add section
+      #check if def has it on left and/or right
       for def in curNode:
-        replaceIt(section, def, it, items)
+        var hasItLeft = false
+        var hasItRight = false
+        for n in def[0 ..< ^1]:
+          if n.hasIt(it):
+            hasItLeft = true
+            break
+        if def[^1].hasIt(it):
+          hasItRight = true
+        
+        # handle initialization via single it expression
+        if not hasItLeft and hasItRight:
+          var cdef = def.copyNimTree
+          cdef.del(def.len-1)
+          recurseIt(cdef, def[^1], it, items)
+          section.add cdef
+        else:
+          replaceIt(section, def, it, items)
+
+      #for def in curNode:
+        #replaceIt(section, def, it, items)
     of nnkObjectTy:
       var objType = curNode.copyNimNode
       parentNode.add objType
@@ -256,7 +296,7 @@ proc recurseIt(parentNode:NimNode, curNode:NimNode, it:NimNode, items:seq[NimNod
       for c in curNode:
         replaceIt(enumNode, c, it, items)
       parentNode.add enumNode
-    of nnkIdentDefs:
+    of nnkIdentDefs, nnkConstDef:
       replaceIt(parentNode, curNode, it, items)
     of nnkTypeSection, nnkTypeDef:
       var node = curNode.copyNimNode
@@ -307,4 +347,27 @@ macro gen*(args: varargs[untyped]): untyped =
     else:
       result.add s
 
-  # echo result.astGenRepr
+  #echo result.astGenRepr
+
+macro enumGen*(arg: typed, body: untyped): untyped =
+  ## Unwraps the enum fields in ``arg`` and passes the values to ``gen``.
+
+  #echo arg.astGenRepr
+  expectKind arg, nnkSym
+  let impl = getImpl(arg)
+  expectMinLen impl, 3
+  let e = impl[2]
+  expectKind e, nnkEnumTy
+
+  result = nnkCall.newTree(ident("gen"))
+  for f in e:
+    if f.kind == nnkEmpty: continue
+
+    if f.kind == nnkEnumFieldDef:
+      result.add nnkTupleConstr.newTree(ident(f[0].repr), f[1])
+    else:
+      result.add f
+
+  result.add body
+
+  #echo result.astGenRepr

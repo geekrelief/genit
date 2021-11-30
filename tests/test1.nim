@@ -8,6 +8,7 @@
 import unittest
 
 import genit
+import macros
 
 type 
   State1 = object
@@ -159,3 +160,52 @@ test "capitalize":
     var `^it` = $$it
   
   check Red == "red"
+
+
+test "set var, let via it expression":
+  type Color = enum
+    none = 0 
+    red = 1
+    green = 2
+    blue = 3
+
+  let color = blue
+  gen(none, red, green, blue):
+    var varVal = case color:
+      of it: %it
+    let letVal = case varVal:
+      of %it: it
+      else: none 
+  
+  check varVal == 3
+  check letVal == blue
+
+test "set const via it expression":
+  gen(none, red, green, blue):
+    const `it Val` = %it
+  
+  check redVal == 1
+
+test "enum":
+
+  type Color = enum
+    none
+    red
+    green
+    blue
+
+  enumGen(Color):
+    var `^it` = $$it
+  
+  check Red == "red"
+
+  type NumberColor = enum
+    nnone = -1
+    nred = 1
+    ngreen = 2
+    nblue = 3
+
+  enumGen(NumberColor):
+    var `^it[0]` = it[1]
+  
+  check Nred == 1
