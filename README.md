@@ -1,5 +1,5 @@
 # genit
-The `gen` macro implements a small DSL that works like an inline proc but for templates which can be used to inline, repetitive code. 
+Nim macro(s) that implements a small DSL that works like an inline proc but for templates which can be used to inline, repetitive code while hopefully improving intent and maintainablity at the cost of clarity. The examples below show a reduction of 50-66% in code size.
 
 ---
 
