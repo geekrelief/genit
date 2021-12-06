@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.4.0
+## :Version: 0.5.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -128,7 +128,7 @@ runnableExamples:
 
 ## Enum
 ## ----
-## Iteration over enums can be done with ``enumGen``.
+## Iteration over enums can be done with ``genWith``.
 runnableExamples:
   type NumberColor = enum
     none = -1
@@ -136,7 +136,7 @@ runnableExamples:
     green = 2
     blue = 3
 
-  enumGen(NumberColor):
+  genWith NumberColor:
     var `^it[0]` = ($$it[0], it[1])
   
   doAssert Red == ("red", 1)
@@ -349,8 +349,9 @@ macro gen*(args: varargs[untyped]): untyped =
 
   #echo result.astGenRepr
 
-macro enumGen*(arg: typed, body: untyped): untyped =
+macro genWith*(arg: typed, body: untyped): untyped =
   ## Unwraps the enum fields in ``arg`` and passes the values to ``gen``.
+  ## TODO?: handle object/instance fields
 
   #echo arg.astGenRepr
   expectKind arg, nnkSym

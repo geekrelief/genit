@@ -194,7 +194,7 @@ test "enum":
     green
     blue
 
-  enumGen(Color):
+  genWith(Color):
     var `^it` = $$it
   
   check Red == "red"
@@ -205,7 +205,7 @@ test "enum":
     ngreen = 2
     nblue = 3
 
-  enumGen(NumberColor):
+  genWith(NumberColor):
     var `^it[0]` = it[1]
   
   check Nred == 1

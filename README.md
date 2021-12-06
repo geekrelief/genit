@@ -46,3 +46,22 @@ Produces:
   s.`trans man` = cast[ptr `tm transform component manager_o`](entity_api.`component manager`(s.entity_ctx, s.`transform component`))
   s.`tag man` = cast[ptr `tm tag component manager_o`](entity_api.`component manager`(s.entity_ctx, s.`tag component`))
 ```
+---
+
+```nim
+  gen (A, `-=`, x), (D, `+=`, x), (W, `-=`, z), (S, `+=`, z):
+    if s.input.held_keys[`TM_INPUT_KEYBOARD_ITEM it[0]`]:
+      it[1](local_movement.`it[2]`, 1.0f)
+```
+
+Produces:
+```nim
+  if s.input.held_keys[TM_INPUT_KEYBOARD_ITEM_A]:
+    `-=`(local_movement.x, 1.0f)
+  if s.input.held_keys[TM_INPUT_KEYBOARD_ITEM_D]:
+    `+=`(local_movement.x, 1.0f)
+  if s.input.held_keys[TM_INPUT_KEYBOARD_ITEM_W]:
+    `-=`(local_movement.z, 1.0f)
+  if s.input.held_keys[TM_INPUT_KEYBOARD_ITEM_S]:
+    `+=`(local_movement.z, 1.0f)
+```
