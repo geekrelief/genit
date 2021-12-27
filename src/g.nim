@@ -133,27 +133,31 @@ proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
     else:
       otherNode(depth, scope, n)
 
-proc toNimNode(c: Context, itemTable: var Table[string, NimNode]): NimNode =
+proc toNimNode(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
   if c.hasIt:
     case c.kind:
     of ckIt:
-      itemTable[c.name]
+      for i in countDown(itemTableStack.len-1, 0):
+        if itemTableStack[i].hasKey(c.name):
+          result = itemTableStack[i][c.name]
+          break
+      result
     of ckGen:
       if c.hasIt:
         var n = newNimNode(nnkStmtList)
+        itemTableStack.add initTable[string, NimNode]()
         for item in c.scope.items:
-          itemTable[c.scope.itsName] = item
+          itemTableStack[^1][c.scope.itsName] = item
           for child in c.children:
-            n.add child.toNimNode(itemTable)
-
-        itemTable.del(c.scope.itsName)
+            n.add child.toNimNode(itemTableStack)
+        discard itemTableStack.pop()
         n
       else:
         c.output
     else:
       var n = newNimNode(c.nk)
       for child in c.children:
-        n.add child.toNimNode(itemTable)
+        n.add child.toNimNode(itemTableStack)
       n
   else:
     c.output
@@ -195,8 +199,8 @@ macro g*(args: varargs[untyped]): untyped =
   var c:Context = parseGen(0, nil, gNode)
   
   decho "-- transform"
-  var itemTable = initTable[string, NimNode]()
-  c.output = c.toNimNode(itemTable)
+  var itemTableStack = @[initTable[string, NimNode]()]
+  c.output = c.toNimNode(itemTableStack)
   if c.output != nil:
     decho c.output.treeRepr
   else:

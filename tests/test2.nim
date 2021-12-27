@@ -19,10 +19,18 @@ test "basic items":
   check declared(b)
   check b == 1
 
-test "nested":
+test "nested, shadowed":
   var sum = 0
   g 1, 2:
-    g(it = this, 1, 2):
+    g(3, 5): # inner it shadows outer it, so we get 3+3, 5+5 twice
+      sum += it + it
+  
+  check sum == 32
+
+test "nested, renamed":
+  var sum = 0
+  g 1, 2:
+    g(it = this, 3, 5):
       sum += it + this
   
-  check sum == 12
+  check sum == 22
