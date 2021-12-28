@@ -87,7 +87,7 @@ proc space(count: int): string =
 proc parseNode(depth: int, scope: Scope, n: NimNode): Context
 proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context
 
-proc otherNode(depth: int, scope: Scope, n:NimNode): Context =
+proc parseOtherNode(depth: int, scope: Scope, n:NimNode): Context =
   decho &"{space(depth)} otherNode ckNode {n.kind}"
   var c = Context(nk: n.kind, kind: ckNode)
   for child in n:
@@ -101,7 +101,7 @@ proc otherNode(depth: int, scope: Scope, n:NimNode): Context =
       c.output.add child.output
   c
 
-proc identKind(depth: int, scope: Scope, n: NimNode): Context =
+proc parseIdentKind(depth: int, scope: Scope, n: NimNode): Context =
   decho &"{space(depth)} identKind"
   var c:Context
   block transform:
@@ -127,10 +127,10 @@ proc identKind(depth: int, scope: Scope, n: NimNode): Context =
   result = c
 
 
-proc litKind(depth: int, scope: Scope, n: NimNode): Context =
+proc parseLitKind(depth: int, scope: Scope, n: NimNode): Context =
   result = case n.kind:
   of nnkIdent: 
-    identKind(depth, scope, n)
+    parseIdentKind(depth, scope, n)
   else:
     Context(nk: n.kind, kind: ckNode, output: n)
 
@@ -212,18 +212,18 @@ proc parsePrefix(depth: int , scope: Scope, n: NimNode): Context =
       assert child.hasIt
       Context(kind: ckOpItIndex, hasIt: true, children: @[child])
     else:
-      otherNode(depth, scope, n)
+      parseOtherNode(depth, scope, n)
 
 proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
   decho &"{space(depth)} parseNode"
   result = case n.kind:
     of LitKinds:
-      litKind(depth, scope, n)
+      parseLitKind(depth, scope, n)
     of nnkCall, nnkCommand:
       if n[0].kind == nnkIdent and n[0].strVal == MacroName:
         parseGen(depth + 1, scope, n)
       else:
-        otherNode(depth, scope, n)
+        parseOtherNode(depth, scope, n)
     of nnkAccQuoted:
       parseAccQuoted(depth, scope, n)
     of nnkBracketExpr:
@@ -231,13 +231,15 @@ proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
     of nnkPrefix:
       parsePrefix(depth, scope, n)
     else:
-      otherNode(depth, scope, n)
+      parseOtherNode(depth, scope, n)
 
 proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
   var scope = Scope(parent: parentScope, itsName: ItsName)
   var c = Context(kind: ckGen, nk: n.kind, body: n[^1], scope: scope)
 
-  var args = n[1..^2]
+  var args:seq[NimNode]
+  if n.len > 2: 
+    args = n[1..^2]
 
   decho &"{space(depth)} parseGen {args.repr}"
 
@@ -255,10 +257,13 @@ proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
       scope.items.add arg
 
   for s in c.body:
-    var childContext = parseNode(depth + 1, scope, s)
+    var childContext = parseNode(depth, scope, s)
     c.children.add childContext
     if childContext.hasIt:
       c.hasIt = true
+
+  if not c.hasIt:
+    c.output = c.body
 
   result = c
 

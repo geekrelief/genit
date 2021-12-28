@@ -93,11 +93,16 @@ test "stringify and index":
   check green == ("green", 1)
   check blue == ("blue", 2)
 
-]#
 
 test "stringify named":
-  g.debug:
-    g(l = Label, name, age):
-      var `it l` = $$it & $$l
+  g(l = Label, name, age):
+    var `it l` = $$it & $$l
   check nameLabel == "nameLabel"
   check ageLabel == "ageLabel"
+]#
+
+test "no args":
+  g:
+    var foo = "bar"
+  check foo == "bar"
+
