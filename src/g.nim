@@ -1,8 +1,7 @@
-import std / [ macros, tables, strformat ]
+import std / [ macros, tables, strformat, genasts, strutils ]
 #import macronimics
 
 const 
-  debug = false
   MacroName = "g"
   ItsName = "it"
 
@@ -13,19 +12,21 @@ const
   LitKinds* = EmptyKinds + IntKinds + FloatKinds + StrLitKinds
 
 type
+  #[
   OpKind = enum
     ## Specifies the operations
-    Stringify # $$it = item -> "item"
-    Capitalize # ^it = item -> Item
-    TupleIndex # it[n]
-    Item
-    Named
-  
+    opStringify # $$it = item -> "item"
+    opCapitalize # ^it = item -> Item
+    opTupleIndex # it[n]
+    opItem
+    opNamed
+  ]#
+
   ContextKind = enum
     ckNode
     ckGen
     ckIt
-    ckOp
+    ckAccQuoted
     ckOpTupleIndex # it[n]
     #Stringify # $$it = item -> "item"
     #Capitalize # ^it = item -> Item
@@ -59,11 +60,21 @@ type
         elseBranch: Context
       else: discard
 
-proc decho(msg:string) {.inline.} =
-  when debug:
+var debugFlag {.compileTime.} = false
+
+macro debug*(body: untyped): untyped =
+  debugFlag = true
+  result = genast(body):
+    body
+    static:
+      debugOff()
+
+proc debugOff*() {.compileTime.} =
+  debugFlag = false
+
+proc decho(msg:string) {.compileTime.} =
+  if debugFlag:
     echo msg
-  else:
-    discard
 
 proc add(parent: Context, child: Context): Context {.discardable.} =
   parent.children.add child
@@ -76,7 +87,22 @@ proc space(count: int): string =
 proc parseNode(depth: int, scope: Scope, n: NimNode): Context
 proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context
 
+proc otherNode(depth: int, scope: Scope, n:NimNode): Context =
+  decho &"{space(depth)} otherNode ckNode {n.kind}"
+  var c = Context(nk: n.kind, kind: ckNode)
+  for child in n:
+    var childContext = parseNode(depth, scope, child)
+    c.add childContext
+    if childContext.hasIt:
+      c.hasIt = true
+  if not c.hasIt:
+    c.output = newNimNode(c.nk)
+    for child in c.children:
+      c.output.add child.output
+  c
+
 proc identKind(depth: int, scope: Scope, n: NimNode): Context =
+  decho &"{space(depth)} identKind"
   var c:Context
   block transform:
     var curScope = scope
@@ -107,21 +133,77 @@ proc litKind(depth: int, scope: Scope, n: NimNode): Context =
   else:
     Context(nk: n.kind, kind: ckNode, output: n)
 
-proc otherNode(depth: int, scope: Scope, n:NimNode): Context =
-  decho &"{space(depth)} ckNode {n.kind}"
-  var c = Context(nk: n.kind, kind: ckNode)
-  for child in n:
-    var childContext = parseNode(depth + 1, scope, child)
-    c.add childContext
-    if childContext.hasIt:
-      c.hasIt = true
-  if not c.hasIt:
-    c.output = newNimNode(c.nk)
-    for child in c.children:
-      c.output.add child.output
+type 
+  AccQuotedStateKind = enum
+    aqkRoot
+    aqkIt
+    aqkBracketOpen
+    aqkTupleIndex
+  
+  AccQuotedState = object
+    case kind: AccQuotedStateKind
+    of aqkTupleIndex:
+      tupleIndex: int
+    else:
+      discard
+
+proc parseAccQuoted(depth: int, scope: Scope, n: NimNode): Context =
+  decho &"{space(depth)} parseAccQuoted"
+  decho n.treeRepr
+  var c = Context(kind: ckAccQuoted, nk: nnkAccQuoted)
+  var state = AccQuotedState(kind: aqkRoot)
+  for id in n:
+    decho &"{space(depth)} {state.kind} '{id.kind = }' '{id.repr = }'"
+    var childContext = parseNode(depth, scope, id)
+    case state.kind:
+    of aqkRoot:
+      c.children.add childContext
+      if childContext.hasIt:
+        c.hasIt = true
+        state = AccQuotedState(kind: aqkIt)
+    of aqkIt:
+      assert childContext.kind == ckNode
+      if childContext.output.strVal == "[":
+        state = AccQuotedState(kind: aqkBracketOpen)
+      else:
+        c.children.add childContext
+        state = AccQuotedState(kind: aqkRoot)
+    of aqkBracketOpen:
+      assert childContext.kind == ckNode
+      state = AccQuotedState(kind: aqkTupleIndex, tupleIndex: parseInt(childContext.output.strVal))
+    of aqkTupleIndex:
+      assert childContext.kind == ckNode 
+      assert childContext.output.strVal == "]"
+      var tupleIndexContext = Context(kind: ckOpTupleIndex, tupleIndex: state.tupleIndex, hasIt: true)
+      var lastChildContext = c.children.pop()
+      tupleIndexContext.add lastChildContext
+      c.children.add tupleIndexContext
+      state = AccQuotedState(kind: aqkIt)
+  decho &"{space(depth)} {c.children.len = }"
   c
 
+proc parseBracketExpr(depth: int, scope: Scope, n: NimNode): Context =
+  # first child:
+  #   BracketExpr it[0][1]
+  #   Ident array[0] # not hasIt
+  #   Ident it[0] # hasIt
+  # second child:
+  #   IntLit it[0]
+  # need to parse first child and see if it has it
+  #  if yes then ContextKind is ckOpTupleIndex
+  #  else ckNode
+  var first = parseNode(depth, scope, n[0])
+  if first.hasIt:
+    var second = parseNode(depth, scope, n[1])
+    result = Context(kind: ckOpTupleIndex, tupleIndex: second.output.intVal.int, hasIt: true)
+    result.add first
+  else:
+    result = Context(kind: ckNode, nk: n.kind)
+    result.children.add first
+    result.children.add parseNode(depth, scope, n[1])
+
 proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
+  decho &"{space(depth)} parseNode"
   result = case n.kind:
     of LitKinds:
       litKind(depth, scope, n)
@@ -130,41 +212,16 @@ proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
         parseGen(depth + 1, scope, n)
       else:
         otherNode(depth, scope, n)
+    of nnkAccQuoted:
+      parseAccQuoted(depth, scope, n)
+    of nnkBracketExpr:
+      parseBracketExpr(depth, scope, n)
     else:
       otherNode(depth, scope, n)
 
-proc toNimNode(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
-  if c.hasIt:
-    case c.kind:
-    of ckIt:
-      for i in countDown(itemTableStack.len-1, 0):
-        if itemTableStack[i].hasKey(c.name):
-          result = itemTableStack[i][c.name]
-          break
-      result
-    of ckGen:
-      if c.hasIt:
-        var n = newNimNode(nnkStmtList)
-        itemTableStack.add initTable[string, NimNode]()
-        for item in c.scope.items:
-          itemTableStack[^1][c.scope.itsName] = item
-          for child in c.children:
-            n.add child.toNimNode(itemTableStack)
-        discard itemTableStack.pop()
-        n
-      else:
-        c.output
-    else:
-      var n = newNimNode(c.nk)
-      for child in c.children:
-        n.add child.toNimNode(itemTableStack)
-      n
-  else:
-    c.output
-
 proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
   var scope = Scope(parent: parentScope, itsName: ItsName)
-  var c = Context(nk: n.kind, kind: ckGen, body: n[^1], scope: scope)
+  var c = Context(kind: ckGen, nk: n.kind, body: n[^1], scope: scope)
 
   var args = n[1..^2]
 
@@ -191,11 +248,71 @@ proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
 
   result = c
 
+proc toNimNode(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode
+
+proc transformIt(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
+  case c.kind:
+  of ckIt:
+    result = c.toNimNode(itemTableStack)
+  of ckOpTupleIndex:
+    var tn = c.children[0].transformIt(itemTableStack)
+    assert tn.kind == nnkTupleConstr
+    result = tn[c.tupleIndex]
+  else:
+    discard
+
+proc toNimNodeFromAccQuoted(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
+  result = newNimNode(nnkAccQuoted)
+  var transform: seq[Context]
+  for child in c.children:
+    case child.kind:
+    of ckIt, ckNode:
+      result.add child.toNimNode(itemTableStack)
+    of ckOpTupleIndex:
+      result.add child.transformIt(itemTableStack)
+    else: discard
+
+proc toNimNode(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
+  if c.hasIt:
+    case c.kind:
+    of ckIt:
+      for i in countDown(itemTableStack.len-1, 0):
+        if itemTableStack[i].hasKey(c.name):
+          result = itemTableStack[i][c.name]
+          break
+      result
+    of ckGen:
+      if c.hasIt:
+        var n = newNimNode(nnkStmtList)
+        itemTableStack.add initTable[string, NimNode]()
+        for item in c.scope.items:
+          itemTableStack[^1][c.scope.itsName] = item
+          for child in c.children:
+            n.add child.toNimNode(itemTableStack)
+        discard itemTableStack.pop()
+        n
+      else:
+        c.output
+    of ckAccQuoted:
+      toNimNodeFromAccQuoted(c, itemTableStack)
+    of ckOpTupleIndex:
+      c.transformIt(itemTableStack)
+    else:
+      var n = newNimNode(c.nk)
+      for child in c.children:
+        n.add child.toNimNode(itemTableStack)
+      n
+  else:
+    c.output
+
 macro g*(args: varargs[untyped]): untyped =
   var gNode = newNimNode(nnkCall)
   gNode.add ident(MacroName)
   for a in args:
     gNode.add a
+  decho "-- AST"
+  decho gNode.treeRepr
+
   var c:Context = parseGen(0, nil, gNode)
   
   decho "-- transform"
