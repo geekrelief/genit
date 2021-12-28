@@ -13,6 +13,8 @@ import std / [ macros, tables, strformat, genasts, strutils ]
 const 
   MacroName = "g"
   ItsName = "it"
+  StringifyPrefix = "$$"
+  ItIndexPrefix = "%"
 
   EmptyKinds* = { nnkNone, nnkEmpty, nnkNilLit }
   IntKinds* = { nnkCharLit..nnkUint64Lit }
@@ -193,14 +195,27 @@ proc parseBracketExpr(depth: int, scope: Scope, n: NimNode): Context =
   #  if yes then ContextKind is ckOpTupleIndex
   #  else ckNode
   var first = parseNode(depth, scope, n[0])
+  var second = parseNode(depth, scope, n[1])
   if first.hasIt:
-    var second = parseNode(depth, scope, n[1])
-    result = Context(kind: ckOpTupleIndex, tupleIndex: second.output.intVal.int, hasIt: true)
-    result.add first
+    result = Context(kind: ckOpTupleIndex, tupleIndex: second.output.intVal.int, hasIt: true, children: @[first])
   else:
-    result = Context(kind: ckNode, nk: n.kind)
-    result.children.add first
-    result.children.add parseNode(depth, scope, n[1])
+    result = Context(kind: ckNode, nk: n.kind, children: @[first, second])
+
+proc parsePrefix(depth: int , scope: Scope, n: NimNode): Context =
+  decho &"{space(depth)} parsePrefix {n.repr}"
+  var prefix = n[0].strVal
+  var exp = n[1]
+  case prefix:
+    of StringifyPrefix:
+      var child = parseNode(depth, scope, exp)
+      assert child.hasIt
+      Context(kind: ckOpStringify, hasIt: true, children: @[child])
+    of ItIndexPrefix:
+      var child = parseNode(depth, scope, exp)
+      assert child.hasIt
+      Context(kind: ckOpItIndex, hasIt: true, children: @[child])
+    else:
+      otherNode(depth, scope, n)
 
 proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
   decho &"{space(depth)} parseNode"
@@ -216,6 +231,8 @@ proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
       parseAccQuoted(depth, scope, n)
     of nnkBracketExpr:
       parseBracketExpr(depth, scope, n)
+    of nnkPrefix:
+      parsePrefix(depth, scope, n)
     else:
       otherNode(depth, scope, n)
 
@@ -254,15 +271,25 @@ proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
 proc morph(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode
 
 proc morphIt(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
+  var first = if c.children.len > 0 : c.children[0] else: nil
   case c.kind:
   of ckIt:
     result = c.morph(itemTableStack)
   of ckOpTupleIndex:
-    var tn = c.children[0].morphIt(itemTableStack)
-    assert tn.kind == nnkTupleConstr
-    result = tn[c.tupleIndex]
+    var n = first.morphIt(itemTableStack)
+    assert n.kind == nnkTupleConstr
+    result = n[c.tupleIndex]
   of ckOpStringify:
-    discard
+    var n = first.morphIt(itemTableStack)
+    result = newLit(n.repr)
+  of ckOpItIndex:
+    assert first.kind == ckIt
+    var n = first.morphIt(itemTableStack)
+    var key = ItIndexPrefix & first.name
+    for i in countDown(itemTableStack.len-1, 0):
+      if itemTableStack[i].hasKey(key):
+        result = itemTableStack[i][key]
+        break
   else:
     discard
 
@@ -290,8 +317,9 @@ proc morph(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode
       if c.hasIt:
         var n = newNimNode(nnkStmtList)
         itemTableStack.add initTable[string, NimNode]()
-        for item in c.scope.items:
+        for i, item in pairs(c.scope.items):
           itemTableStack[^1][c.scope.itsName] = item
+          itemTableStack[^1][ItIndexPrefix & c.scope.itsName] = newLit(i)
           for child in c.children:
             n.add child.morph(itemTableStack)
         discard itemTableStack.pop()
@@ -300,7 +328,7 @@ proc morph(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode
         c.output
     of ckAccQuoted:
       morphAccQuoted(c, itemTableStack)
-    of ckOpTupleIndex:
+    of ckOpTupleIndex, ckOpStringify, ckOpItIndex:
       c.morphIt(itemTableStack)
     else:
       var n = newNimNode(c.nk)

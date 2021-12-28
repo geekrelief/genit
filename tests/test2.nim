@@ -48,12 +48,11 @@ type
   Color = tuple
     r, g, b: uint8
 
-g.debug:
-  g red, green, blue:
-    var `it State1`: State1 
+g red, green, blue:
+  var `it State1`: State1 
 
-  g red, green, blue:
-    var `it State2`: State2
+g red, green, blue:
+  var `it State2`: State2
 
 #[
 test "mixed named and unnamed args":
@@ -65,7 +64,6 @@ test "mixed named and unnamed args":
   
   check greenState1.aComponent == 100
   check greenState1.cComponent == 300
-  ]#
 
 test "tuples":
 
@@ -85,13 +83,13 @@ test "tuples":
   check first == 1
   check second == 2
   check third == 3
+  ]#
 
-#[
+
 test "stringify and index":
   g red, green, blue:
     var it = ($$it, %it)
-  
+
   check red == ("red", 0)
   check green == ("green", 1)
   check blue == ("blue", 2)
-]#
