@@ -5,28 +5,26 @@
 #     Modify the `parse` functions, update ContextKind / Context
 #   Once we have the entire Context tree, we can transform back to NimNodes
 #     Modify morph functions for traversing the Context tree
-#     Modify `morphIt` for operations
+#     Modify `morphItem` for operations
 
 import std / [ macros, tables, strformat, genasts, strutils ]
-#import macronimics
 
-const 
-  MacroName = "g"
-  ItsName = "it"
-  StringifyPrefix = "$$"
-  ItIndexPrefix = "%"
+const MacroName = "g"
+const ItsName = "it"
+const StringifyPrefix = "$$"
+const ItIndexPrefix = "%"
 
-  EmptyKinds* = { nnkNone, nnkEmpty, nnkNilLit }
-  IntKinds* = { nnkCharLit..nnkUint64Lit }
-  FloatKinds* = { nnkFloatLit..nnkFloat64Lit } 
-  StrLitKinds* = { nnkStrLit..nnkTripleStrLit, nnkCommentStmt, nnkIdent, nnkSym }
-  LitKinds* = EmptyKinds + IntKinds + FloatKinds + StrLitKinds
+const EmptyKinds* = { nnkNone, nnkEmpty, nnkNilLit }
+const IntKinds* = { nnkCharLit..nnkUint64Lit }
+const FloatKinds* = { nnkFloatLit..nnkFloat64Lit }
+const StrLitKinds* = { nnkStrLit..nnkTripleStrLit, nnkCommentStmt, nnkIdent, nnkSym }
+const LitKinds* = EmptyKinds + IntKinds + FloatKinds + StrLitKinds
 
-type
-  ContextKind = enum
+type ContextKind = enum
     ckNode
     ckGen
     ckIt
+    ckNamed
     ckAccQuoted
     ckOpTupleIndex # it[n]
     ckOpStringify # $$it = item -> "item"
@@ -35,13 +33,13 @@ type
     ckSection
     ckCase
   
-  Scope = ref object
+type Scope = ref object
     parent: Scope
     itsName: string
     named: Table[string, NimNode]
     items: seq[NimNode]
   
-  Context = ref object
+type Context = ref object
     nk: NimNodeKind
     output: NimNode
     hasIt: bool
@@ -111,8 +109,8 @@ proc identKind(depth: int, scope: Scope, n: NimNode): Context =
     while curScope != nil: 
       for lhs, rhs in curScope.named:
         if n.strVal == lhs:
-          decho &"{space(depth)} ckNode nnkIdent ({lhs} => {rhs.repr})"
-          c = Context(nk: nnkIdent, kind: ckNode, output: rhs)
+          decho &"{space(depth)} ckNamed nnkIdent ({lhs} => {rhs.repr})"
+          c = Context(nk: nnkIdent, kind: ckNamed, output: rhs, hasIt: true)
           break transform
 
       if n.strVal == curScope.itsName:
@@ -123,6 +121,7 @@ proc identKind(depth: int, scope: Scope, n: NimNode): Context =
       curScope = curScope.parent
 
   if c.isNil:
+    # some other identifier
     decho &"{space(depth)} ckNode nnkIdent {n.repr}"
     c = Context(kind: ckNode, output: n)
   result = c
@@ -135,14 +134,13 @@ proc litKind(depth: int, scope: Scope, n: NimNode): Context =
   else:
     Context(nk: n.kind, kind: ckNode, output: n)
 
-type 
-  AccQuotedStateKind = enum
+type AccQuotedStateKind = enum
     aqkRoot
     aqkIt
     aqkBracketOpen
     aqkTupleIndex
   
-  AccQuotedState = object
+type AccQuotedState = object
     case kind: AccQuotedStateKind
     of aqkTupleIndex:
       tupleIndex: int
@@ -164,7 +162,6 @@ proc parseAccQuoted(depth: int, scope: Scope, n: NimNode): Context =
         c.hasIt = true
         state = AccQuotedState(kind: aqkIt)
     of aqkIt:
-      assert childContext.kind == ckNode
       if childContext.output.strVal == "[":
         state = AccQuotedState(kind: aqkBracketOpen)
       else:
@@ -267,24 +264,42 @@ proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
 
 #< Parsing functions
 
-#> Mighty Morph'in Power functions
-proc morph(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode
+type ItemTableStack = seq[Table[string, NimNode]]
 
-proc morphIt(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
+#> Mighty Morph'in Power functions
+proc morph(c: Context, itemTableStack: var ItemTableStack): NimNode
+
+proc morphIt(c: Context, itemTableStack: var ItemTableStack): NimNode =
+  for i in countDown(itemTableStack.len-1, 0):
+    if itemTableStack[i].hasKey(c.name):
+      result = itemTableStack[i][c.name]
+      break
+
+proc morphGen(c: Context, itemTableStack: var ItemTableStack): NimNode =
+  result = newNimNode(nnkStmtList)
+  itemTableStack.add initTable[string, NimNode]()
+  for i, item in pairs(c.scope.items):
+    itemTableStack[^1][c.scope.itsName] = item
+    itemTableStack[^1][ItIndexPrefix & c.scope.itsName] = newLit(i)
+    for child in c.children:
+      result.add child.morph(itemTableStack)
+  discard itemTableStack.pop()
+
+proc morphOp(c: Context, itemTableStack: var ItemTableStack): NimNode =
+  decho "morphItem"
   var first = if c.children.len > 0 : c.children[0] else: nil
   case c.kind:
-  of ckIt:
-    result = c.morph(itemTableStack)
   of ckOpTupleIndex:
-    var n = first.morphIt(itemTableStack)
+    var n = first.morph(itemTableStack)
     assert n.kind == nnkTupleConstr
     result = n[c.tupleIndex]
   of ckOpStringify:
-    var n = first.morphIt(itemTableStack)
+    var n = first.morph(itemTableStack)
+    decho &"  ckOpStringify {n.repr}"
     result = newLit(n.repr)
   of ckOpItIndex:
     assert first.kind == ckIt
-    var n = first.morphIt(itemTableStack)
+    var n = first.morph(itemTableStack)
     var key = ItIndexPrefix & first.name
     for i in countDown(itemTableStack.len-1, 0):
       if itemTableStack[i].hasKey(key):
@@ -293,43 +308,18 @@ proc morphIt(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNo
   else:
     discard
 
-proc morphAccQuoted(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
-  result = newNimNode(nnkAccQuoted)
-  var transform: seq[Context]
-  for child in c.children:
-    case child.kind:
-    of ckIt, ckNode:
-      result.add child.morph(itemTableStack)
-    of ckOpTupleIndex:
-      result.add child.morphIt(itemTableStack)
-    else: discard
-
-proc morph(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
+proc morph(c: Context, itemTableStack: var ItemTableStack): NimNode =
+  decho &"morph {c.kind}"
   if c.hasIt:
     case c.kind:
     of ckIt:
-      for i in countDown(itemTableStack.len-1, 0):
-        if itemTableStack[i].hasKey(c.name):
-          result = itemTableStack[i][c.name]
-          break
-      result
+      morphIt(c, itemTableStack)
+    of ckNamed:
+      c.output
     of ckGen:
-      if c.hasIt:
-        var n = newNimNode(nnkStmtList)
-        itemTableStack.add initTable[string, NimNode]()
-        for i, item in pairs(c.scope.items):
-          itemTableStack[^1][c.scope.itsName] = item
-          itemTableStack[^1][ItIndexPrefix & c.scope.itsName] = newLit(i)
-          for child in c.children:
-            n.add child.morph(itemTableStack)
-        discard itemTableStack.pop()
-        n
-      else:
-        c.output
-    of ckAccQuoted:
-      morphAccQuoted(c, itemTableStack)
+      morphGen(c, itemTableStack)
     of ckOpTupleIndex, ckOpStringify, ckOpItIndex:
-      c.morphIt(itemTableStack)
+      c.morphOp(itemTableStack)
     else:
       var n = newNimNode(c.nk)
       for child in c.children:

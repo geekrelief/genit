@@ -83,7 +83,6 @@ test "tuples":
   check first == 1
   check second == 2
   check third == 3
-  ]#
 
 
 test "stringify and index":
@@ -93,3 +92,12 @@ test "stringify and index":
   check red == ("red", 0)
   check green == ("green", 1)
   check blue == ("blue", 2)
+
+]#
+
+test "stringify named":
+  g.debug:
+    g(l = Label, name, age):
+      var `it l` = $$it & $$l
+  check nameLabel == "nameLabel"
+  check ageLabel == "ageLabel"
