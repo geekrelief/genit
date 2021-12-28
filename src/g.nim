@@ -1,3 +1,12 @@
+## A DSL for generating repetitive code.
+
+# To extend the DSL: 
+#   Capture what we're parsing in Nim to genit's Context nodes (NimNode -> Context)
+#     Modify the `parse` functions, update ContextKind / Context
+#   Once we have the entire Context tree, we can transform back to NimNodes
+#     Modify morph functions for traversing the Context tree
+#     Modify `morphIt` for operations
+
 import std / [ macros, tables, strformat, genasts, strutils ]
 #import macronimics
 
@@ -12,25 +21,15 @@ const
   LitKinds* = EmptyKinds + IntKinds + FloatKinds + StrLitKinds
 
 type
-  #[
-  OpKind = enum
-    ## Specifies the operations
-    opStringify # $$it = item -> "item"
-    opCapitalize # ^it = item -> Item
-    opTupleIndex # it[n]
-    opItem
-    opNamed
-  ]#
-
   ContextKind = enum
     ckNode
     ckGen
     ckIt
     ckAccQuoted
     ckOpTupleIndex # it[n]
-    #Stringify # $$it = item -> "item"
-    #Capitalize # ^it = item -> Item
-    #Named
+    ckOpStringify # $$it = item -> "item"
+    ckOpItIndex # %it => item index
+    ckOpCapitalize # ^it = item -> Item
     ckSection
     ckCase
   
@@ -84,6 +83,7 @@ proc space(count: int): string =
   for i in 0..<count:
     result.add "  "
 
+#> Parsing functions
 proc parseNode(depth: int, scope: Scope, n: NimNode): Context
 proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context
 
@@ -248,31 +248,36 @@ proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
 
   result = c
 
-proc toNimNode(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode
+#< Parsing functions
 
-proc transformIt(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
+#> Mighty Morph'in Power functions
+proc morph(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode
+
+proc morphIt(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
   case c.kind:
   of ckIt:
-    result = c.toNimNode(itemTableStack)
+    result = c.morph(itemTableStack)
   of ckOpTupleIndex:
-    var tn = c.children[0].transformIt(itemTableStack)
+    var tn = c.children[0].morphIt(itemTableStack)
     assert tn.kind == nnkTupleConstr
     result = tn[c.tupleIndex]
+  of ckOpStringify:
+    discard
   else:
     discard
 
-proc toNimNodeFromAccQuoted(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
+proc morphAccQuoted(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
   result = newNimNode(nnkAccQuoted)
   var transform: seq[Context]
   for child in c.children:
     case child.kind:
     of ckIt, ckNode:
-      result.add child.toNimNode(itemTableStack)
+      result.add child.morph(itemTableStack)
     of ckOpTupleIndex:
-      result.add child.transformIt(itemTableStack)
+      result.add child.morphIt(itemTableStack)
     else: discard
 
-proc toNimNode(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
+proc morph(c: Context, itemTableStack: var seq[Table[string, NimNode]]): NimNode =
   if c.hasIt:
     case c.kind:
     of ckIt:
@@ -288,22 +293,23 @@ proc toNimNode(c: Context, itemTableStack: var seq[Table[string, NimNode]]): Nim
         for item in c.scope.items:
           itemTableStack[^1][c.scope.itsName] = item
           for child in c.children:
-            n.add child.toNimNode(itemTableStack)
+            n.add child.morph(itemTableStack)
         discard itemTableStack.pop()
         n
       else:
         c.output
     of ckAccQuoted:
-      toNimNodeFromAccQuoted(c, itemTableStack)
+      morphAccQuoted(c, itemTableStack)
     of ckOpTupleIndex:
-      c.transformIt(itemTableStack)
+      c.morphIt(itemTableStack)
     else:
       var n = newNimNode(c.nk)
       for child in c.children:
-        n.add child.toNimNode(itemTableStack)
+        n.add child.morph(itemTableStack)
       n
   else:
     c.output
+#< Mighty Morph'in Power functions
 
 macro g*(args: varargs[untyped]): untyped =
   var gNode = newNimNode(nnkCall)
@@ -317,7 +323,7 @@ macro g*(args: varargs[untyped]): untyped =
   
   decho "-- transform"
   var itemTableStack = @[initTable[string, NimNode]()]
-  c.output = c.toNimNode(itemTableStack)
+  c.output = c.morph(itemTableStack)
   if c.output != nil:
     decho c.output.treeRepr
   else:
