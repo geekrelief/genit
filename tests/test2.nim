@@ -48,14 +48,21 @@ type
   Color = tuple
     r, g, b: uint8
 
-g red, green, blue:
-  var `it State1`: State1 
+#[
+test "accQuoted":
+  g red, green, blue:
+    var `it State1`: State1 
 
-g red, green, blue:
-  var `it State2`: State2
+  check declared(redState1)
+]#
 
 #[
 test "mixed named and unnamed args":
+  g red, green, blue:
+    var `it State1`: State1 
+
+  g red, green, blue:
+    var `it State2`: State2
   greenState2.aComponent = 100 
   greenState2.cComponent = 300 
 
@@ -99,10 +106,18 @@ test "stringify named":
     var `it l` = $$it & $$l
   check nameLabel == "nameLabel"
   check ageLabel == "ageLabel"
-]#
 
 test "no args":
   g:
     var foo = "bar"
   check foo == "bar"
+]#
 
+
+test "capitalize":
+  g red, green, blue:
+    var `^it` = $$it
+  
+  check Red == "red"
+  check Green == "green"
+  check Blue == "blue"
