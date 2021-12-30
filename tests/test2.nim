@@ -56,6 +56,20 @@ test "accQuoted":
   check declared(redState1)
 ]#
 
+test "unnamed args":
+  g(c = Color):
+    type c = enum
+      `Red c`
+      `Green c`
+      `Blue c`
+      `No c`
+
+  check declared(Color)
+  check declared(RedColor)
+  check declared(GreenColor)
+  check declared(BlueColor)
+  check declared(NoColor)
+
 #[
 test "mixed named and unnamed args":
   g red, green, blue:
@@ -111,7 +125,6 @@ test "no args":
   g:
     var foo = "bar"
   check foo == "bar"
-]#
 
 
 test "capitalize":
@@ -121,3 +134,89 @@ test "capitalize":
   check Red == "red"
   check Green == "green"
   check Blue == "blue"
+]#
+
+#[
+    var color1 = `Green c`
+    proc getColor(color: c): (int, int, int) =
+      gen (Red, (255, 0, 0)), (Green, (0, 255, 0)), (Blue, (0, 0, 255)):
+        case color:
+          of `it[0] c`: it[1]
+          else: (0, 0, 0) 
+
+    var index1 = getColor(color1)
+    check index1 == (0, 255, 0)
+    var index2 = getColor(`No c`)
+    check index2 == (0, 0, 0)
+    ]#
+
+#[
+test "typedef enum":
+  gen Free, Carried, FlyingUp, FlyingBack:
+    type 
+      BoxState = enum
+        `BoxState it`
+      Verbs = enum
+        `it`
+  
+  check ord(BoxStateFlyingBack) == 3
+
+test "typedef object":
+  gen(c = Component, red, green, blue):
+    type
+      RGB = object
+        `it c`*: float
+
+    var color = RGB(`red c`:1.0, `green c`:0.0, `blue c`:1.0)
+
+  check color.redComponent == 1
+
+
+test "set var, let via it expression":
+  type Color = enum
+    none = 0 
+    red = 1
+    green = 2
+    blue = 3
+
+  let color = blue
+  gen(none, red, green, blue):
+    var varVal = case color:
+      of it: %it
+    let letVal = case varVal:
+      of %it: it
+      else: none 
+  
+  check varVal == 3
+  check letVal == blue
+
+test "set const via it expression":
+  gen(none, red, green, blue):
+    const `it Val` = %it
+  
+  check redVal == 1
+
+test "with enum":
+
+  type Color = enum
+    none
+    red
+    green
+    blue
+
+  genWith(Color):
+    var `^it` = $$it
+  
+  check Red == "red"
+
+  type NumberColor = enum
+    nnone = -1
+    nred = 1
+    ngreen = 2
+    nblue = 3
+
+  genWith(NumberColor):
+    var `^it[0]` = it[1]
+  
+  check Nred == 1
+  ]#

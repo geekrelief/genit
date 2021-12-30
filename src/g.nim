@@ -316,6 +316,11 @@ proc morphGen(c: Context, itemTableStack: var ItemTableStack): NimNode =
     for child in c.children:
       result.add child.morph(itemTableStack)
   discard itemTableStack.pop()
+  
+  if result.len == 0:
+    for child in c.children:
+      result.add child.morph(itemTableStack)
+ 
 
 proc morphOp(c: Context, itemTableStack: var ItemTableStack): NimNode =
   decho "morphItem"
