@@ -113,7 +113,7 @@ proc parseIdentKind(depth: int, scope: Scope, n: NimNode): Context =
       for lhs, rhs in curScope.named:
         if n.strVal == lhs:
           decho &"{space(depth)} ckNamed nnkIdent ({lhs} => {rhs.repr})"
-          c = Context(nk: nnkIdent, kind: ckNamed, output: rhs, hasItem: true)
+          c = Context(nk: nnkIdent, kind: ckNamed, output: rhs)
           break transform
 
       if n.strVal == curScope.itsName:
@@ -126,7 +126,7 @@ proc parseIdentKind(depth: int, scope: Scope, n: NimNode): Context =
   if c.isNil:
     # some other identifier
     decho &"{space(depth)} ckNode nnkIdent {n.repr}"
-    c = Context(kind: ckNode, output: n)
+    c = Context(kind: ckNode, nk: nnkIdent, output: n)
   result = c
 
 
@@ -173,7 +173,7 @@ proc parseAccQuoted(depth: int, scope: Scope, n: NimNode): Context =
         if op in AccQuotedOperators:
           # when done, Context should have hasItem true
           if op == ItIndexPrefix:
-            childContext = Context(kind: ckOpItIndex) 
+            childContext = Context(kind: ckOpItIndex)
           elif op == CapitalizePrefix:
             childContext = Context(kind: ckOpCapitalize)
           state = AccQuotedState(kind: aqkPrefix, head: childContext, tail: childContext)
@@ -187,23 +187,29 @@ proc parseAccQuoted(depth: int, scope: Scope, n: NimNode): Context =
         c.children.add childContext
         state = AccQuotedState(kind: aqkRoot)
     of aqkBracketOpen:
-      assert childContext.kind == ckNode
+      assert childContext.nk == nnkIdent
       state = AccQuotedState(kind: aqkTupleIndex, tupleIndex: parseInt(childContext.output.strVal))
     of aqkTupleIndex:
       assert childContext.kind == ckNode 
       assert childContext.output.strVal == "]"
       var tupleIndexContext = Context(kind: ckOpTupleIndex, tupleIndex: state.tupleIndex, hasItem: true)
-      var lastChildContext = c.children.pop()
-      tupleIndexContext.children.add lastChildContext
+      var containerContext = c.children.pop()
+      tupleIndexContext.children.add containerContext
       c.children.add tupleIndexContext
       state = AccQuotedState(kind: aqkIt)
     of aqkPrefix:
-      #check for multiple operators and chain hasItem?
       assert childContext.hasItem
       c.hasItem = true
       state.head.hasItem = true
       state.tail.children.add childContext
       state = AccQuotedState(kind: aqkRoot)
+
+  if not c.hasItem:
+    c.output = newNimNode(c.nk)
+    for child in c.children:
+      c.output.add child.output
+    decho &"parseAccQuoted output: {c.output.repr}"
+
 
 proc parseBracketExpr(depth: int, scope: Scope, n: NimNode): Context =
   # first child:
@@ -212,6 +218,7 @@ proc parseBracketExpr(depth: int, scope: Scope, n: NimNode): Context =
   #   Ident it[0] # hasItem
   # second child:
   #   IntLit it[0]
+  #
   # need to parse first child and see if it has it
   #  if yes then ContextKind is ckOpTupleIndex
   #  else ckNode
@@ -219,8 +226,11 @@ proc parseBracketExpr(depth: int, scope: Scope, n: NimNode): Context =
   var second = parseNode(depth, scope, n[1])
   if first.hasItem:
     result = Context(kind: ckOpTupleIndex, tupleIndex: second.output.intVal.int, hasItem: true, children: @[first])
+  elif second.hasItem:
+      # array[..it..]
+      result = Context(kind: ckNode, nk: n.kind, hasItem: true, children: @[first, second])
   else:
-    result = Context(kind: ckNode, nk: n.kind, children: @[first, second])
+    result = Context(kind: ckNode, nk: n.kind, output: n)
 
 proc parsePrefix(depth: int , scope: Scope, n: NimNode): Context =
   decho &"{space(depth)} parsePrefix {n.repr}"
@@ -228,16 +238,25 @@ proc parsePrefix(depth: int , scope: Scope, n: NimNode): Context =
   var exp = n[1]
   if prefix in Operators:
     var child = parseNode(depth, scope, exp)
-    assert child.hasItem
-    case prefix:
-    of StringifyPrefix:
-      Context(kind: ckOpStringify, hasItem: true, children: @[child])
-    of ItIndexPrefix:
-      Context(kind: ckOpItIndex, hasItem: true, children: @[child])
-    of CapitalizePrefix:
-      Context(kind: ckOpCapitalize, hasItem: true, children: @[child])
-    else: 
-      nil
+    if child.hasItem:
+      case prefix:
+      of StringifyPrefix:
+        Context(kind: ckOpStringify, hasItem: true, children: @[child])
+      of ItIndexPrefix:
+        Context(kind: ckOpItIndex, hasItem: true, children: @[child])
+      of CapitalizePrefix:
+        Context(kind: ckOpCapitalize, hasItem: true, children: @[child])
+      else: 
+        nil
+    else:
+      assert child.output.kind == nnkIdent
+      case prefix:
+      of StringifyPrefix:
+        Context(kind: ckNode, output: newLit(child.output.repr))
+      of CapitalizePrefix:
+        Context(kind: ckNode, output: ident(child.output.strVal.capitalizeAscii))
+      else:
+        raiseAssert &"parsePrefix unexpected '{prefix}' in \"{n.repr}\" "
   else:
     parseOtherNode(depth, scope, n)
 
@@ -290,7 +309,9 @@ proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
       c.hasItem = true
 
   if not c.hasItem:
-    c.output = c.body
+    c.output = newNimNode(nnkStmtList)
+    for child in c.children:
+      c.output.add child.output
 
   result = c
 
@@ -316,11 +337,6 @@ proc morphGen(c: Context, itemTableStack: var ItemTableStack): NimNode =
     for child in c.children:
       result.add child.morph(itemTableStack)
   discard itemTableStack.pop()
-  
-  if result.len == 0:
-    for child in c.children:
-      result.add child.morph(itemTableStack)
- 
 
 proc morphOp(c: Context, itemTableStack: var ItemTableStack): NimNode =
   decho "morphItem"
@@ -345,7 +361,7 @@ proc morphOp(c: Context, itemTableStack: var ItemTableStack): NimNode =
   of ckOpCapitalize:
     var n = first.morph(itemTableStack)
     assert first.nk == nnkIdent
-    result = ident(n.strVal[0].toUpperAscii & n.strVal[1 .. ^1])
+    result = ident(n.strVal.capitalizeAscii)
   else:
     discard
 

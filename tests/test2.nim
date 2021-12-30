@@ -2,7 +2,11 @@ import unittest
 
 import g
 
-#[
+test "no args":
+  g:
+    var foo = "bar"
+  check foo == "bar"
+
 test "basic items":
   var sum = 0
   g 1, 2:
@@ -31,12 +35,11 @@ test "nested, shadowed":
 test "nested, renamed":
   var sum = 0
 
-    g 1, 2:
-      g(it = this, 3, 5):
-        sum += it + this
+  g 1, 2:
+    g(it = this, 3, 5):
+      sum += it + this
   
   check sum == 22
-]#
 
 type 
   State1 = object
@@ -48,13 +51,11 @@ type
   Color = tuple
     r, g, b: uint8
 
-#[
 test "accQuoted":
   g red, green, blue:
     var `it State1`: State1 
 
   check declared(redState1)
-]#
 
 test "unnamed args":
   g(c = Color):
@@ -70,7 +71,6 @@ test "unnamed args":
   check declared(BlueColor)
   check declared(NoColor)
 
-#[
 test "mixed named and unnamed args":
   g red, green, blue:
     var `it State1`: State1 
@@ -88,12 +88,14 @@ test "mixed named and unnamed args":
 
 test "tuples":
 
-  g.debug:
-    g (red, (255, 0, 0)), (green, (0, 255, 0)), (blue, (0, 0, 255)):
-      `it[0] State1`.aComponent = it[1][0]
-      `it[0] State1`.bComponent = it[1][1]
-      `it[0] State1`.cComponent = it[1][2]
-  
+  g red, green, blue:
+    var `it State1`: State1 
+
+  g (red, (255, 0, 0)), (green, (0, 255, 0)), (blue, (0, 0, 255)):
+    `it[0] State1`.aComponent = it[1][0]
+    `it[0] State1`.bComponent = it[1][1]
+    `it[0] State1`.cComponent = it[1][2]
+
   check redState1.aComponent == 255
   check greenState1.bComponent == 255
   check blueState1.cComponent == 255
@@ -104,7 +106,6 @@ test "tuples":
   check first == 1
   check second == 2
   check third == 3
-
 
 test "stringify and index":
   g red, green, blue:
@@ -121,11 +122,6 @@ test "stringify named":
   check nameLabel == "nameLabel"
   check ageLabel == "ageLabel"
 
-test "no args":
-  g:
-    var foo = "bar"
-  check foo == "bar"
-
 
 test "capitalize":
   g red, green, blue:
@@ -134,7 +130,6 @@ test "capitalize":
   check Red == "red"
   check Green == "green"
   check Blue == "blue"
-]#
 
 #[
     var color1 = `Green c`
