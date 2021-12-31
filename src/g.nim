@@ -6,8 +6,8 @@
 #     New operations need to be updated in parsePrefix and parseAccQuoted
 #     Context should set `hasItem` if it is an item or has one as a descendant.
 #   Once we have the entire Context tree, we can transform back to NimNodes
-#     Modify morph functions for traversing the Context tree
-#     Modify `morphOp` for operations
+#     Modify tf functions for traversing the Context tree
+#     Modify `tfOp` for operations
 
 import std / [ macros, tables, strformat, genasts, strutils ]
 
@@ -36,7 +36,7 @@ type ContextKind = enum
     ckOpItIndex # %it => item index
     ckOpCapitalize # ^it = item -> Item
     ckSection
-    ckCase
+    ckCaseStmt
   
 type Scope = ref object
     parent: Scope
@@ -59,7 +59,8 @@ type Context = ref object
         tupleIndex: int
       of ckSection: 
         identDefs: seq[Context]
-      of ckCase:
+      of ckCaseStmt:
+        xpr: Context
         ofBranch: Context
         elseBranch: Context
       else: discard
@@ -260,6 +261,21 @@ proc parsePrefix(depth: int , scope: Scope, n: NimNode): Context =
   else:
     parseOtherNode(depth, scope, n)
 
+
+proc parseCaseStmt(depth: int, scope: Scope, n: NimNode): Context = 
+  result = Context(kind: ckCaseStmt, nk: n.kind, hasItem: true)
+  for child in n:
+    case child.kind:
+    of nnkOfBranch:
+      result.ofBranch = parseNode(depth, scope, child)
+      assert result.ofBranch.hasItem
+    of nnkElse:
+      result.elseBranch = parseNode(depth, scope, child)
+      assert not result.elseBranch.hasItem
+    else:
+      result.xpr = parseNode(depth, scope, child)
+      assert not result.xpr.hasItem
+
 proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
   decho &"{space(depth)} parseNode"
   result = case n.kind:
@@ -276,6 +292,8 @@ proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
       parseBracketExpr(depth, scope, n)
     of nnkPrefix:
       parsePrefix(depth, scope, n)
+    of nnkCaseStmt:
+      parseCaseStmt(depth, scope, n)
     else:
       parseOtherNode(depth, scope, n)
 
@@ -317,74 +335,90 @@ proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
 
 #< Parsing functions
 
+
+#> AST Transformers
 type ItemTableStack = seq[Table[string, NimNode]]
+type ScopeIndex = tuple[scope: Scope, index: int]
+type ScopeIndexStack = seq[ScopeIndex]
 
-#> Mighty Morph'in Power functions
-proc morph(c: Context, itemTableStack: var ItemTableStack): NimNode
+proc tf(c: Context, s: var ScopeIndexStack): NimNode
 
-proc morphIt(c: Context, itemTableStack: var ItemTableStack): NimNode =
-  for i in countDown(itemTableStack.len-1, 0):
-    if itemTableStack[i].hasKey(c.name):
-      result = itemTableStack[i][c.name]
-      break
+proc tfIt(c: Context, s: var ScopeIndexStack): NimNode =
+  for i in countDown(s.len - 1, 0):
+    if s[i].scope.itsName == c.name:
+      return s[i].scope.items[ s[i].index ]
+  raiseAssert &"Could not find \"{c.name}\" in scopes."
 
-proc morphGen(c: Context, itemTableStack: var ItemTableStack): NimNode =
+proc tfGen(c: Context, s: var ScopeIndexStack): NimNode =
   result = newNimNode(nnkStmtList)
-  itemTableStack.add initTable[string, NimNode]()
-  for i, item in pairs(c.scope.items):
-    itemTableStack[^1][c.scope.itsName] = item
-    itemTableStack[^1][ItIndexPrefix & c.scope.itsName] = newLit(i)
+  s.add (c.scope, 0)
+  
+  for i in 0..<c.scope.items.len:
+    s[^1].index = i
     for child in c.children:
-      result.add child.morph(itemTableStack)
-  discard itemTableStack.pop()
+      var o = child.tf(s)
+      if o != nil:
+        result.add o
+  discard s.pop()
 
-proc morphOp(c: Context, itemTableStack: var ItemTableStack): NimNode =
-  decho "morphItem"
+proc tfOp(c: Context, s: var ScopeIndexStack): NimNode =
+  decho "tfItem"
   var first = if c.children.len > 0 : c.children[0] else: nil
   case c.kind:
   of ckOpTupleIndex:
-    var n = first.morph(itemTableStack)
+    var n = first.tf(s)
     assert n.kind == nnkTupleConstr
     result = n[c.tupleIndex]
   of ckOpStringify:
-    var n = first.morph(itemTableStack)
+    var n = first.tf(s)
     decho &"  ckOpStringify {n.repr}"
     result = newLit(n.repr)
   of ckOpItIndex:
     assert first.kind == ckIt
-    var n = first.morph(itemTableStack)
-    var key = ItIndexPrefix & first.name
-    for i in countDown(itemTableStack.len-1, 0):
-      if itemTableStack[i].hasKey(key):
-        result = itemTableStack[i][key]
+    for i in countDown(s.len-1, 0):
+      if s[i].scope.itsName == first.name:
+        result = newLit(s[i].index)
         break
   of ckOpCapitalize:
-    var n = first.morph(itemTableStack)
+    var n = first.tf(s)
     assert first.nk == nnkIdent
     result = ident(n.strVal.capitalizeAscii)
   else:
     discard
 
-proc morph(c: Context, itemTableStack: var ItemTableStack): NimNode =
-  decho &"morph {c.kind} {c.hasItem}"
+proc tfCase(c: Context, s: var ScopeIndexStack): NimNode =
+  # case should only return the entire case statement on the last index, of last scope item index
+  if s[^1].scope.items.len - 1 == s[^1].index:
+    result = newTree(nnkCaseStmt, c.xpr.output)
+    for i in 0..<s[^1].scope.items.len: # redo the indices for case's ofBranch
+      s[^1].index = i 
+      result.add c.ofBranch.tf(s)
+    if c.elseBranch != nil:
+      result.add c.elseBranch.output
+
+
+proc tf(c: Context, s: var ScopeIndexStack): NimNode =
+  decho &"tf {c.kind} {c.hasItem}"
   if c.hasItem:
     case c.kind:
     of ckIt:
-      morphIt(c, itemTableStack)
+      tfIt(c, s)
     of ckNamed:
       c.output
     of ckGen:
-      morphGen(c, itemTableStack)
+      tfGen(c, s)
     of ckOpTupleIndex, ckOpStringify, ckOpItIndex, ckOpCapitalize:
-      c.morphOp(itemTableStack)
+      tfOp(c, s)
+    of ckCaseStmt:
+      tfCase(c, s)
     else:
       var n = newNimNode(c.nk)
       for child in c.children:
-        n.add child.morph(itemTableStack)
+        n.add child.tf(s)
       n
   else:
     c.output
-#< Mighty Morph'in Power functions
+#< AST Transformers
 
 macro g*(args: varargs[untyped]): untyped =
   var gNode = newNimNode(nnkCall)
@@ -397,10 +431,12 @@ macro g*(args: varargs[untyped]): untyped =
   var c:Context = parseGen(0, nil, gNode)
   
   decho "-- transform"
-  var itemTableStack = @[initTable[string, NimNode]()]
-  c.output = c.morph(itemTableStack)
+  if c.output == nil:
+    var s:ScopeIndexStack
+    c.output = c.tfGen(s)
   if c.output != nil:
     decho c.output.treeRepr
   else:
     decho "invalid"
+
   result = c.output

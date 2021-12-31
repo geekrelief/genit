@@ -131,10 +131,34 @@ test "capitalize":
   check Green == "green"
   check Blue == "blue"
 
-#[
+test "case":
+  type Color = enum
+    Red
+    Green
+    Blue
+    None
+  
+  let color = Green
+
+  let index1 = g((Red, (255, 0, 0)), (Green, (0, 255, 0)), (Blue, (0, 0, 255))):
+      case color:
+        of `it[0]`: it[1]
+        else: (0, 0, 0) 
+
+  check index1 == (0, 255, 0)
+
+
+test "case2":
+  g(c = Color):
+    type c = enum
+      `Red c`
+      `Green c`
+      `Blue c`
+      `No c`
+
     var color1 = `Green c`
     proc getColor(color: c): (int, int, int) =
-      gen (Red, (255, 0, 0)), (Green, (0, 255, 0)), (Blue, (0, 0, 255)):
+      g (Red, (255, 0, 0)), (Green, (0, 255, 0)), (Blue, (0, 0, 255)):
         case color:
           of `it[0] c`: it[1]
           else: (0, 0, 0) 
@@ -143,7 +167,7 @@ test "capitalize":
     check index1 == (0, 255, 0)
     var index2 = getColor(`No c`)
     check index2 == (0, 0, 0)
-    ]#
+
 
 #[
 test "typedef enum":
