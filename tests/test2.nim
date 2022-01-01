@@ -70,7 +70,7 @@ test "accQuoted":
 
   check declared(redState1)
 
-test "unnamed args":
+test "unnamed args / enum":
   g(c = Color):
     type c = enum
       `Red c`
@@ -181,21 +181,18 @@ test "case2":
     var index2 = getColor(`No c`)
     check index2 == (0, 0, 0)
 
-#[
-test "typedef enum":
-  g.debug:
-    g Free, Carried, FlyingUp, FlyingBack:
-      type 
-        BoxState = enum
-          `BoxState it`
-  #[
-        Verbs = enum
-          `it`
+test "typedef enum it":
+  g Free, Carried, FlyingUp, FlyingBack:
+    type 
+      BoxState = enum
+        `bs it`
+      Verbs = enum
+        `it`
   
-  ]#
-  check ord(BoxStateFlyingBack) == 3
+  check ord(bsFlyingBack) == 3
+  check ord(FlyingUp) == 2
 
-
+#[
 test "typedef object":
   gen(c = Component, red, green, blue):
     type

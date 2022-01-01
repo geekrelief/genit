@@ -35,8 +35,9 @@ type ContextKind = enum
     ckOpStringify # $$it = item -> "item"
     ckOpItIndex # %it => item index
     ckOpCapitalize # ^it = item -> Item
-    ckSection
+    ckVarSection
     ckCaseStmt
+    ckTypeSection
     ckTypeDef
     ckEnumTy
   
@@ -60,12 +61,13 @@ type Context = ref object
         itsName: string
       of ckOpTupleIndex: 
         tupleIndex: int
-      of ckSection: discard
+      of ckVarSection: discard
       of ckCaseStmt:
         # use these instead of children
         xpr: Context
         ofBranch: Context
         elseBranch: Context
+      of ckTypeSection: discard
       of ckTypeDef: discard
       of ckEnumTy: discard
       else: discard
@@ -307,9 +309,11 @@ proc parsePrefix(n: NimNode, scope: Scope): Context =
 
 proc parseSection(n: NimNode, scope:Scope): Context =
   decho scope.depth, &"parseSection {n.repr}"
-  result = Context(kind: ckSection, nk: n.kind)
+  if n.kind == nnkTypeSection:
+    result = Context(kind: ckTypeSection, nk: n.kind)
+  else:
+    result = Context(kind: ckVarSection, nk: n.kind)
   for child in n:
-    assert child.kind == nnkIdentDefs or child.kind == nnkTypeDef
     result.children.add parseNode(child, scope)
   result.propHasItem()
 
@@ -328,17 +332,18 @@ proc parseCaseStmt(n: NimNode, scope: Scope): Context =
       result.xpr = parseNode(child, scope)
       assert not result.xpr.hasItem
 
-#[
 proc parseTypeDef(n: NimNode, scope: Scope): Context =
   result = Context(kind: ckTypeDef, nk: n.kind)
-  result.children.add parsedNode(n[0], scope) #typeName
+  result.children.add parseNode(n[0], scope) #typeName
   result.children.add parseNode(n[1], scope) # pragma
   result.children.add parseNode(n[2], scope) # typeImpl
-  result.propHashItem()
+  result.propHasItem()
 
-#proc parseEnumTy(n: NimNode, scope: Scope): Context =
-#  echo n.treeRepr
-]#
+proc parseEnumTy(n: NimNode, scope: Scope): Context =
+  result = Context(kind: ckEnumTy, nk: n.kind)
+  for child in n:
+    result.children.add parseNode(child, scope)
+  result.propHasItem()
 
 proc parseNode(n: NimNode, scope: Scope): Context =
   decho scope.depth, &"parseNode {n.kind}"
@@ -360,10 +365,10 @@ proc parseNode(n: NimNode, scope: Scope): Context =
       parseSection(n, scope)
     of nnkCaseStmt:
       parseCaseStmt(n, scope)
-    #of nnkTypeDef:
-    #  parseTypeDef(n, scope)
-    #of nnkEnumTy:
-    #  parseEnumTy(n, scope)
+    of nnkTypeDef:
+      parseTypeDef(n, scope)
+    of nnkEnumTy:
+      parseEnumTy(n, scope)
     else:
       parseOtherNode(n, scope)
 
@@ -425,17 +430,18 @@ proc isOnLastItem(s: ScopeIndexStack): bool =
   s[^1].scope.items.len - 1 == s[^1].index
 
 
-proc tfSection(c: Context, s: var ScopeIndexStack): NimNode =
-  decho &"tfSection {c.nk}"
+proc tfVarSection(c: Context, s: var ScopeIndexStack): NimNode =
+  decho &"tfVarSection {c.nk}"
   if isOnLastItem(s):
     result = newTree(c.nk)
-    for identDefC in c.children:
-      if identDefC.hasItem:
+    for defc in c.children:
+      if defc.hasItem:
         for i in 0..<s[^1].scope.items.len:
           s[^1].index = i
-          result.add tf(identDefC, s)
+          result.add tf(defc, s)
       else:
-        result.add identDefC.output
+        result.add defc.output
+
 
 proc tfCase(c: Context, s: var ScopeIndexStack): NimNode =
   # case should only return the entire case statement on the last index, of last scope item index
@@ -447,6 +453,24 @@ proc tfCase(c: Context, s: var ScopeIndexStack): NimNode =
     if c.elseBranch != nil:
       result.add c.elseBranch.output
 
+
+proc tfTypeSection(c: Context, s: var ScopeIndexStack): NimNode =
+  decho &"tfTypeSection {c.nk}"
+  if isOnLastItem(s):
+    result = newTree(c.nk)
+    for defc in c.children:
+      if defc.hasItem:
+        result.add tf(defc, s)
+      else:
+        result.add defc.output
+
+proc tfEnumTy(c: Context, s: var ScopeIndexStack): NimNode =
+  assert c.children.len == 2
+  result = newTree(nnkEnumTy, c.children[0].output)
+  var def = c.children[1]
+  for i in 0..<s[^1].scope.items.len:
+    s[^1].index = i
+    result.add tf(def, s)
 
 proc tf(c: Context, s: var ScopeIndexStack): NimNode =
   decho &"tf {c.kind} {c.hasItem}"
@@ -460,10 +484,14 @@ proc tf(c: Context, s: var ScopeIndexStack): NimNode =
       tfGen(c, s)
     of ckOpTupleIndex, ckOpStringify, ckOpItIndex, ckOpCapitalize:
       tfOp(c, s)
-    of ckSection:
-      tfSection(c, s)
+    of ckVarSection:
+      tfVarSection(c, s)
     of ckCaseStmt:
       tfCase(c, s)
+    of ckTypeSection:
+      tfTypeSection(c, s)
+    of ckEnumTy:
+      tfEnumTy(c, s)
     else:
       var n = newNimNode(c.nk)
       for child in c.children:
