@@ -89,7 +89,6 @@ proc space(count: int): string =
 
 #> Parsing functions
 proc parseNode(depth: int, scope: Scope, n: NimNode): Context
-proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context
 
 proc parseOtherNode(depth: int, scope: Scope, n:NimNode): Context =
   decho &"{space(depth)} otherNode ckNode {n.kind}"
@@ -104,6 +103,42 @@ proc parseOtherNode(depth: int, scope: Scope, n:NimNode): Context =
     for child in c.children:
       c.output.add child.output
   c
+
+proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
+  var scope = Scope(parent: parentScope, itsName: ItsName)
+  var c = Context(kind: ckGen, nk: n.kind, body: n[^1], scope: scope)
+
+  var args:seq[NimNode]
+  if n.len > 2: 
+    args = n[1..^2]
+
+  decho &"{space(depth)} parseGen {args.repr}"
+
+  for arg in args:
+    if arg.kind == nnkExprEqExpr:
+      if arg[0].repr == ItsName: # change its name
+        scope.itsName = arg[1].repr
+      else:
+        assert arg[0].kind == nnkIdent
+        let
+          key = arg[0].strVal
+          value = arg[1]
+        scope.named[key] = value # todo: check if this a nim fragment
+    else:
+      scope.items.add arg
+
+  for s in c.body:
+    var childContext = parseNode(depth, scope, s)
+    c.children.add childContext
+    if childContext.hasItem:
+      c.hasItem = true
+
+  if not c.hasItem:
+    c.output = newNimNode(nnkStmtList)
+    for child in c.children:
+      c.output.add child.output
+
+  result = c
 
 proc parseIdentKind(depth: int, scope: Scope, n: NimNode): Context =
   decho &"{space(depth)} identKind"
@@ -136,6 +171,7 @@ proc parseLitKind(depth: int, scope: Scope, n: NimNode): Context =
   of nnkIdent: 
     parseIdentKind(depth, scope, n)
   else:
+    decho &"{space(depth)} LitKind {n.kind} {n.repr}"
     Context(nk: n.kind, kind: ckNode, output: n)
 
 type AccQuotedStateKind = enum
@@ -144,7 +180,7 @@ type AccQuotedStateKind = enum
     aqkBracketOpen
     aqkTupleIndex
     aqkPrefix
-  
+
 type AccQuotedState = object
     case kind: AccQuotedStateKind
     of aqkTupleIndex:
@@ -262,6 +298,18 @@ proc parsePrefix(depth: int , scope: Scope, n: NimNode): Context =
     parseOtherNode(depth, scope, n)
 
 
+proc parseSection(depth: int, scope:Scope, n: NimNode): Context =
+  decho &"{space(depth)} parseSection {n.repr}"
+  result = Context(kind: ckSection, nk: n.kind)
+  for child in n:
+    assert child.kind == nnkIdentDefs
+    result.identDefs.add parseNode(depth, scope, child)
+    if result.identDefs[^1].hasItem:
+      result.hasItem = true
+  if not result.hasItem:
+    result.output = n
+
+
 proc parseCaseStmt(depth: int, scope: Scope, n: NimNode): Context = 
   result = Context(kind: ckCaseStmt, nk: n.kind, hasItem: true)
   for child in n:
@@ -276,8 +324,9 @@ proc parseCaseStmt(depth: int, scope: Scope, n: NimNode): Context =
       result.xpr = parseNode(depth, scope, child)
       assert not result.xpr.hasItem
 
+
 proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
-  decho &"{space(depth)} parseNode"
+  decho &"{space(depth)} parseNode {n.kind}"
   result = case n.kind:
     of LitKinds:
       parseLitKind(depth, scope, n)
@@ -292,46 +341,12 @@ proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
       parseBracketExpr(depth, scope, n)
     of nnkPrefix:
       parsePrefix(depth, scope, n)
+    of nnkVarSection, nnkLetSection, nnkConstSection:
+      parseSection(depth, scope, n)
     of nnkCaseStmt:
       parseCaseStmt(depth, scope, n)
     else:
       parseOtherNode(depth, scope, n)
-
-proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
-  var scope = Scope(parent: parentScope, itsName: ItsName)
-  var c = Context(kind: ckGen, nk: n.kind, body: n[^1], scope: scope)
-
-  var args:seq[NimNode]
-  if n.len > 2: 
-    args = n[1..^2]
-
-  decho &"{space(depth)} parseGen {args.repr}"
-
-  for arg in args:
-    if arg.kind == nnkExprEqExpr:
-      if arg[0].repr == ItsName: # change its name
-        scope.itsName = arg[1].repr
-      else:
-        assert arg[0].kind == nnkIdent
-        let
-          key = arg[0].strVal
-          value = arg[1]
-        scope.named[key] = value # todo: check if this a nim fragment
-    else:
-      scope.items.add arg
-
-  for s in c.body:
-    var childContext = parseNode(depth, scope, s)
-    c.children.add childContext
-    if childContext.hasItem:
-      c.hasItem = true
-
-  if not c.hasItem:
-    c.output = newNimNode(nnkStmtList)
-    for child in c.children:
-      c.output.add child.output
-
-  result = c
 
 #< Parsing functions
 
@@ -386,9 +401,27 @@ proc tfOp(c: Context, s: var ScopeIndexStack): NimNode =
   else:
     discard
 
+
+proc isOnLastItem(s: ScopeIndexStack): bool =
+  # Used to delay output if we have a container construct, e.g.: section, case, type
+  s[^1].scope.items.len - 1 == s[^1].index
+
+
+proc tfSection(c: Context, s: var ScopeIndexStack): NimNode =
+  decho &"tfSection {c.nk}"
+  if isOnLastItem(s):
+    result = newTree(c.nk)
+    for identDefC in c.identDefs:
+      if identDefC.hasItem:
+        for i in 0..<s[^1].scope.items.len:
+          s[^1].index = i
+          result.add tf(identDefC, s)
+      else:
+        result.add identDefC.output
+
 proc tfCase(c: Context, s: var ScopeIndexStack): NimNode =
   # case should only return the entire case statement on the last index, of last scope item index
-  if s[^1].scope.items.len - 1 == s[^1].index:
+  if isOnLastItem(s):
     result = newTree(nnkCaseStmt, c.xpr.output)
     for i in 0..<s[^1].scope.items.len: # redo the indices for case's ofBranch
       s[^1].index = i 
@@ -409,6 +442,8 @@ proc tf(c: Context, s: var ScopeIndexStack): NimNode =
       tfGen(c, s)
     of ckOpTupleIndex, ckOpStringify, ckOpItIndex, ckOpCapitalize:
       tfOp(c, s)
+    of ckSection:
+      tfSection(c, s)
     of ckCaseStmt:
       tfCase(c, s)
     else:
