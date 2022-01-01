@@ -37,9 +37,12 @@ type ContextKind = enum
     ckOpCapitalize # ^it = item -> Item
     ckSection
     ckCaseStmt
+    ckTypeDef
+    ckEnumTy
   
 type Scope = ref object
     parent: Scope
+    depth: int
     itsName: string
     named: Table[string, NimNode]
     items: seq[NimNode]
@@ -54,14 +57,17 @@ type Context = ref object
         scope: Scope
         body: NimNode
       of ckIt: 
-        name: string
+        itsName: string
       of ckOpTupleIndex: 
         tupleIndex: int
       of ckSection: discard
-      of ckCaseStmt: # ignore children
+      of ckCaseStmt:
+        # use these instead of children
         xpr: Context
         ofBranch: Context
         elseBranch: Context
+      of ckTypeDef: discard
+      of ckEnumTy: discard
       else: discard
 
 #> Debug
@@ -87,31 +93,46 @@ proc space(count: int): string =
 #< Debug
 
 #> Parsing functions
-proc parseNode(depth: int, scope: Scope, n: NimNode): Context
 
-proc parseOtherNode(depth: int, scope: Scope, n:NimNode): Context =
-  decho &"{space(depth)} otherNode ckNode {n.kind}"
-  var c = Context(nk: n.kind, kind: ckNode)
-  for child in n:
-    var childContext = parseNode(depth, scope, child)
-    c.children.add childContext
-    if childContext.hasItem:
+#> Parsing helper functions
+
+proc propHasItem(c:Context): Context {.discardable.} =
+  for child in c.children:
+    if child.hasItem:
       c.hasItem = true
+      break
+
   if not c.hasItem:
-    c.output = newNimNode(c.nk)
+    var n = newNimNode(c.nk)
     for child in c.children:
-      c.output.add child.output
+      n.add child.output
+    c.output = n
   c
 
-proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
+#< Parsing helper functions
+
+proc parseNode(scope: Scope, n: NimNode): Context
+
+proc parseOtherNode(scope: Scope, n:NimNode): Context =
+  decho &"{space(scope.depth)} otherNode ckNode {n.kind}"
+  var c = Context(nk: n.kind, kind: ckNode)
+  for child in n:
+    var childContext = parseNode(scope, child)
+    c.children.add childContext
+  c.propHasItem()
+
+proc parseGen(parentScope: Scope, n: NimNode): Context =
   var scope = Scope(parent: parentScope, itsName: ItsName)
-  var c = Context(kind: ckGen, nk: n.kind, body: n[^1], scope: scope)
+  if parentScope != nil:
+    scope.depth = parentScope.depth
+  decho &"!!! parseGen assert n.kind == nnkStmtList {n.kind}"
+  var c = Context(kind: ckGen, nk: nnkStmtList, body: n[^1], scope: scope)
 
   var args:seq[NimNode]
   if n.len > 2: 
     args = n[1..^2]
 
-  decho &"{space(depth)} parseGen {args.repr}"
+  decho &"{space(scope.depth)} parseGen {args.repr}"
 
   for arg in args:
     if arg.kind == nnkExprEqExpr:
@@ -127,50 +148,43 @@ proc parseGen(depth: int, parentScope: Scope, n: NimNode): Context =
       scope.items.add arg
 
   for s in c.body:
-    var childContext = parseNode(depth, scope, s)
+    var childContext = parseNode(scope, s)
     c.children.add childContext
-    if childContext.hasItem:
-      c.hasItem = true
 
-  if not c.hasItem:
-    c.output = newNimNode(nnkStmtList)
-    for child in c.children:
-      c.output.add child.output
+  c.propHasItem()
 
-  result = c
-
-proc parseIdentKind(depth: int, scope: Scope, n: NimNode): Context =
-  decho &"{space(depth)} identKind"
+proc parseIdentKind(scope: Scope, n: NimNode): Context =
+  decho &"{space(scope.depth)} identKind"
   var c:Context
   block transform:
     var curScope = scope
     while curScope != nil: 
       for lhs, rhs in curScope.named:
         if n.strVal == lhs:
-          decho &"{space(depth)} ckNamed nnkIdent ({lhs} => {rhs.repr})"
+          decho &"{space(scope.depth)} ckNamed nnkIdent ({lhs} => {rhs.repr})"
           c = Context(nk: nnkIdent, kind: ckNamed, output: rhs)
           break transform
 
       if n.strVal == curScope.itsName:
-        decho &"{space(depth)} ckIt nnkIdent {curScope.itsName}"
-        c = Context(nk: nnkIdent, kind: ckIt, name: curScope.itsName, hasItem: true)
+        decho &"{space(scope.depth)} ckIt nnkIdent {curScope.itsName}"
+        c = Context(nk: nnkIdent, kind: ckIt, itsName: curScope.itsName, hasItem: true)
         break transform
 
       curScope = curScope.parent
 
   if c.isNil:
     # some other identifier
-    decho &"{space(depth)} ckNode nnkIdent {n.repr}"
+    decho &"{space(scope.depth)} ckNode nnkIdent {n.repr}"
     c = Context(kind: ckNode, nk: nnkIdent, output: n)
   result = c
 
 
-proc parseLitKind(depth: int, scope: Scope, n: NimNode): Context =
+proc parseLitKind(scope: Scope, n: NimNode): Context =
   result = case n.kind:
   of nnkIdent: 
-    parseIdentKind(depth, scope, n)
+    parseIdentKind(scope, n)
   else:
-    decho &"{space(depth)} LitKind {n.kind} {n.repr}"
+    decho &"{space(scope.depth)} LitKind {n.kind} {n.repr}"
     Context(nk: n.kind, kind: ckNode, output: n)
 
 type AccQuotedStateKind = enum
@@ -190,24 +204,22 @@ type AccQuotedState = object
     else:
       discard
 
-proc parseAccQuoted(depth: int, scope: Scope, n: NimNode): Context =
-  decho &"{space(depth)} parseAccQuoted"
+proc parseAccQuoted(scope: Scope, n: NimNode): Context =
+  decho &"{space(scope.depth)} parseAccQuoted"
   decho n.treeRepr
   var c = Context(kind: ckAccQuoted, nk: nnkAccQuoted)
   result = c
   var state = AccQuotedState(kind: aqkRoot)
   for id in n:
-    decho &"{space(depth)} {state.kind} '{id.kind = }' '{id.repr = }'"
-    var childContext = parseNode(depth, scope, id)
+    decho &"{space(scope.depth)} {state.kind} '{id.kind = }' '{id.repr = }'"
+    var childContext = parseNode(scope, id)
     case state.kind:
     of aqkRoot:
       if childContext.hasItem:
-        c.hasItem = true
         state = AccQuotedState(kind: aqkIt)
       else:
         let op = childContext.output.strVal
         if op in AccQuotedOperators:
-          # when done, Context should have hasItem true
           if op == ItIndexPrefix:
             childContext = Context(kind: ckOpItIndex)
           elif op == CapitalizePrefix:
@@ -235,19 +247,16 @@ proc parseAccQuoted(depth: int, scope: Scope, n: NimNode): Context =
       state = AccQuotedState(kind: aqkIt)
     of aqkPrefix:
       assert childContext.hasItem
-      c.hasItem = true
       state.head.hasItem = true
       state.tail.children.add childContext
       state = AccQuotedState(kind: aqkRoot)
 
+  c.propHasItem()
   if not c.hasItem:
-    c.output = newNimNode(c.nk)
-    for child in c.children:
-      c.output.add child.output
     decho &"parseAccQuoted output: {c.output.repr}"
 
 
-proc parseBracketExpr(depth: int, scope: Scope, n: NimNode): Context =
+proc parseBracketExpr(scope: Scope, n: NimNode): Context =
   # first child:
   #   BracketExpr it[0][1]
   #   Ident array[0] # not hasItem
@@ -258,22 +267,21 @@ proc parseBracketExpr(depth: int, scope: Scope, n: NimNode): Context =
   # need to parse first child and see if it has it
   #  if yes then ContextKind is ckOpTupleIndex
   #  else ckNode
-  var first = parseNode(depth, scope, n[0])
-  var second = parseNode(depth, scope, n[1])
+  var first = parseNode(scope, n[0])
+  var second = parseNode(scope, n[1])
   if first.hasItem:
-    result = Context(kind: ckOpTupleIndex, tupleIndex: second.output.intVal.int, hasItem: true, children: @[first])
-  elif second.hasItem:
-      # array[..it..]
-      result = Context(kind: ckNode, nk: n.kind, hasItem: true, children: @[first, second])
+    result = Context(kind: ckOpTupleIndex, nk: n.kind, tupleIndex: second.output.intVal.int, children: @[first])
   else:
-    result = Context(kind: ckNode, nk: n.kind, output: n)
+    # array[..it..], array[expr]
+    result = Context(kind: ckNode, nk: n.kind, children: @[first, second])
+  result.propHasItem()
 
-proc parsePrefix(depth: int , scope: Scope, n: NimNode): Context =
-  decho &"{space(depth)} parsePrefix {n.repr}"
+proc parsePrefix(scope: Scope, n: NimNode): Context =
+  decho &"{space(scope.depth)} parsePrefix {n.repr}"
   var prefix = n[0].strVal
   var exp = n[1]
   if prefix in Operators:
-    var child = parseNode(depth, scope, exp)
+    var child = parseNode(scope, exp)
     if child.hasItem:
       case prefix:
       of StringifyPrefix:
@@ -294,60 +302,70 @@ proc parsePrefix(depth: int , scope: Scope, n: NimNode): Context =
       else:
         raiseAssert &"parsePrefix unexpected '{prefix}' in \"{n.repr}\" "
   else:
-    parseOtherNode(depth, scope, n)
+    parseOtherNode(scope, n)
 
 
-proc parseSection(depth: int, scope:Scope, n: NimNode): Context =
-  decho &"{space(depth)} parseSection {n.repr}"
+proc parseSection(scope:Scope, n: NimNode): Context =
+  decho &"{space(scope.depth)} parseSection {n.repr}"
   result = Context(kind: ckSection, nk: n.kind)
   for child in n:
-    assert child.kind == nnkIdentDefs
-    result.children.add parseNode(depth, scope, child)
-    if result.children[^1].hasItem:
-      result.hasItem = true
-  if not result.hasItem:
-    result.output = newNimNode(n.kind)
-    for c in result.children:
-      result.output.add c.output
+    assert child.kind == nnkIdentDefs or child.kind == nnkTypeDef
+    result.children.add parseNode(scope, child)
+  result.propHasItem()
 
 
-proc parseCaseStmt(depth: int, scope: Scope, n: NimNode): Context = 
+proc parseCaseStmt(scope: Scope, n: NimNode): Context = 
   result = Context(kind: ckCaseStmt, nk: n.kind, hasItem: true)
   for child in n:
     case child.kind:
     of nnkOfBranch:
-      result.ofBranch = parseNode(depth, scope, child)
+      result.ofBranch = parseNode(scope, child)
       assert result.ofBranch.hasItem
     of nnkElse:
-      result.elseBranch = parseNode(depth, scope, child)
+      result.elseBranch = parseNode(scope, child)
       assert not result.elseBranch.hasItem
     else:
-      result.xpr = parseNode(depth, scope, child)
+      result.xpr = parseNode(scope, child)
       assert not result.xpr.hasItem
 
+#[
+proc parseTypeDef(scope: Scope, n:NimNode): Context =
+  result = Context(kind: ckTypeDef, nk: n.kind)
+  result.children.add parsedNode(scope, n[0]) #typeName
+  result.children.add parseNode(scope, n[1]) # pragma
+  result.children.add parseNode(scope, n[2]) # typeImpl
+  result.propHashItem()
 
-proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
-  decho &"{space(depth)} parseNode {n.kind}"
+#proc parseEnumTy(scope: Scope, n: NimNode): Context =
+#  echo n.treeRepr
+]#
+
+proc parseNode(scope: Scope, n: NimNode): Context =
+  decho &"{space(scope.depth)} parseNode {n.kind}"
   result = case n.kind:
     of LitKinds:
-      parseLitKind(depth, scope, n)
+      parseLitKind(scope, n)
     of nnkCall, nnkCommand:
       if n[0].kind == nnkIdent and n[0].strVal == MacroName:
-        parseGen(depth + 1, scope, n)
+        parseGen(scope, n)
       else:
-        parseOtherNode(depth, scope, n)
+        parseOtherNode(scope, n)
     of nnkAccQuoted:
-      parseAccQuoted(depth, scope, n)
+      parseAccQuoted(scope, n)
     of nnkBracketExpr:
-      parseBracketExpr(depth, scope, n)
+      parseBracketExpr(scope, n)
     of nnkPrefix:
-      parsePrefix(depth, scope, n)
-    of nnkVarSection, nnkLetSection, nnkConstSection:
-      parseSection(depth, scope, n)
+      parsePrefix(scope, n)
+    of nnkVarSection, nnkLetSection, nnkConstSection, nnkTypeSection:
+      parseSection(scope, n)
     of nnkCaseStmt:
-      parseCaseStmt(depth, scope, n)
+      parseCaseStmt(scope, n)
+    #of nnkTypeDef:
+    #  parseTypeDef(scope, n)
+    #of nnkEnumTy:
+    #  parseEnumTy(scope, n)
     else:
-      parseOtherNode(depth, scope, n)
+      parseOtherNode(scope, n)
 
 #< Parsing functions
 
@@ -360,9 +378,9 @@ proc tf(c: Context, s: var ScopeIndexStack): NimNode
 
 proc tfIt(c: Context, s: var ScopeIndexStack): NimNode =
   for i in countDown(s.len - 1, 0):
-    if s[i].scope.itsName == c.name:
+    if s[i].scope.itsName == c.itsName:
       return s[i].scope.items[ s[i].index ]
-  raiseAssert &"Could not find \"{c.name}\" in scopes."
+  raiseAssert &"Could not find \"{c.itsName}\" in scopes."
 
 proc tfGen(c: Context, s: var ScopeIndexStack): NimNode =
   result = newNimNode(nnkStmtList)
@@ -391,7 +409,7 @@ proc tfOp(c: Context, s: var ScopeIndexStack): NimNode =
   of ckOpItIndex:
     assert first.kind == ckIt
     for i in countDown(s.len-1, 0):
-      if s[i].scope.itsName == first.name:
+      if s[i].scope.itsName == first.itsName:
         result = newLit(s[i].index)
         break
   of ckOpCapitalize:
@@ -463,7 +481,7 @@ macro g*(args: varargs[untyped]): untyped =
   decho "-- AST"
   decho gNode.treeRepr
 
-  var c:Context = parseGen(0, nil, gNode)
+  var c:Context = parseGen(nil, gNode)
   
   decho "-- transform"
   if c.output == nil:

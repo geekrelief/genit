@@ -181,17 +181,20 @@ test "case2":
     var index2 = getColor(`No c`)
     check index2 == (0, 0, 0)
 
-
 #[
 test "typedef enum":
-  gen Free, Carried, FlyingUp, FlyingBack:
-    type 
-      BoxState = enum
-        `BoxState it`
-      Verbs = enum
-        `it`
+  g.debug:
+    g Free, Carried, FlyingUp, FlyingBack:
+      type 
+        BoxState = enum
+          `BoxState it`
+  #[
+        Verbs = enum
+          `it`
   
+  ]#
   check ord(BoxStateFlyingBack) == 3
+
 
 test "typedef object":
   gen(c = Component, red, green, blue):
