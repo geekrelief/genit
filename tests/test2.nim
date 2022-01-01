@@ -7,6 +7,14 @@ test "no args":
     var foo = "bar"
   check foo == "bar"
 
+test "bracket":
+  let arr = [100,200,300]
+  var a: int
+  g:
+    a = arr[2]
+
+  check a == 300
+
 test "basic items":
   var sum = 0
   g 1, 2:
@@ -52,6 +60,11 @@ type
     r, g, b: uint8
 
 test "accQuoted":
+  g(v = value):
+    var `v`: int = 1
+  
+  check declared(value)
+
   g red, green, blue:
     var `it State1`: State1 
 

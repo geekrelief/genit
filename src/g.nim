@@ -57,9 +57,8 @@ type Context = ref object
         name: string
       of ckOpTupleIndex: 
         tupleIndex: int
-      of ckSection: 
-        identDefs: seq[Context]
-      of ckCaseStmt:
+      of ckSection: discard
+      of ckCaseStmt: # ignore children
         xpr: Context
         ofBranch: Context
         elseBranch: Context
@@ -303,11 +302,13 @@ proc parseSection(depth: int, scope:Scope, n: NimNode): Context =
   result = Context(kind: ckSection, nk: n.kind)
   for child in n:
     assert child.kind == nnkIdentDefs
-    result.identDefs.add parseNode(depth, scope, child)
-    if result.identDefs[^1].hasItem:
+    result.children.add parseNode(depth, scope, child)
+    if result.children[^1].hasItem:
       result.hasItem = true
   if not result.hasItem:
-    result.output = n
+    result.output = newNimNode(n.kind)
+    for c in result.children:
+      result.output.add c.output
 
 
 proc parseCaseStmt(depth: int, scope: Scope, n: NimNode): Context = 
@@ -352,7 +353,6 @@ proc parseNode(depth: int, scope: Scope, n: NimNode): Context =
 
 
 #> AST Transformers
-type ItemTableStack = seq[Table[string, NimNode]]
 type ScopeIndex = tuple[scope: Scope, index: int]
 type ScopeIndexStack = seq[ScopeIndex]
 
@@ -411,7 +411,7 @@ proc tfSection(c: Context, s: var ScopeIndexStack): NimNode =
   decho &"tfSection {c.nk}"
   if isOnLastItem(s):
     result = newTree(c.nk)
-    for identDefC in c.identDefs:
+    for identDefC in c.children:
       if identDefC.hasItem:
         for i in 0..<s[^1].scope.items.len:
           s[^1].index = i
