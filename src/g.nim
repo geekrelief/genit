@@ -114,17 +114,16 @@ proc propHasItem(c:Context): Context {.discardable.} =
 
 #< Parsing helper functions
 
-proc parseNode(scope: Scope, n: NimNode): Context
+proc parseNode(n: NimNode, scope: Scope): Context
 
-proc parseOtherNode(scope: Scope, n:NimNode): Context =
+proc parseOtherNode(n: NimNode, scope: Scope): Context =
   decho scope.depth, &"otherNode ckNode {n.kind}"
   var c = Context(nk: n.kind, kind: ckNode)
   for child in n:
-    var childContext = parseNode(scope, child)
-    c.children.add childContext
+    c.children.add parseNode(child, scope)
   c.propHasItem()
 
-proc parseGen(parentScope: Scope, n: NimNode): Context =
+proc parseGen(n:NimNode, parentScope: Scope): Context =
   var scope = Scope(parent: parentScope, itsName: ItsName)
   if parentScope != nil:
     scope.depth = parentScope.depth
@@ -150,12 +149,11 @@ proc parseGen(parentScope: Scope, n: NimNode): Context =
       scope.items.add arg
 
   for s in c.body:
-    var childContext = parseNode(scope, s)
-    c.children.add childContext
+    c.children.add parseNode(s, scope)
 
   c.propHasItem()
 
-proc parseIdentKind(scope: Scope, n: NimNode): Context =
+proc parseIdentKind(n: NimNode, scope: Scope): Context =
   decho scope.depth, "identKind"
   var c:Context
   block transform:
@@ -181,10 +179,10 @@ proc parseIdentKind(scope: Scope, n: NimNode): Context =
   result = c
 
 
-proc parseLitKind(scope: Scope, n: NimNode): Context =
+proc parseLitKind(n: NimNode, scope: Scope): Context =
   result = case n.kind:
   of nnkIdent: 
-    parseIdentKind(scope, n)
+    parseIdentKind(n, scope)
   else:
     decho scope.depth, &"LitKind {n.kind} {n.repr}"
     Context(nk: n.kind, kind: ckNode, output: n)
@@ -206,7 +204,7 @@ type AccQuotedState = object
     else:
       discard
 
-proc parseAccQuoted(scope: Scope, n: NimNode): Context =
+proc parseAccQuoted(n: NimNode, scope: Scope): Context =
   decho scope.depth, &"parseAccQuoted"
   decho 0, n.treeRepr
   var c = Context(kind: ckAccQuoted, nk: nnkAccQuoted)
@@ -214,7 +212,7 @@ proc parseAccQuoted(scope: Scope, n: NimNode): Context =
   var state = AccQuotedState(kind: aqkRoot)
   for id in n:
     decho scope.depth, &"{state.kind} '{id.kind = }' '{id.repr = }'"
-    var childContext = parseNode(scope, id)
+    var childContext = parseNode(id, scope)
     case state.kind:
     of aqkRoot:
       if childContext.hasItem:
@@ -258,7 +256,7 @@ proc parseAccQuoted(scope: Scope, n: NimNode): Context =
     decho scope.depth, &"parseAccQuoted output: {c.output.repr}"
 
 
-proc parseBracketExpr(scope: Scope, n: NimNode): Context =
+proc parseBracketExpr(n: NimNode, scope: Scope): Context =
   # first child:
   #   BracketExpr it[0][1]
   #   Ident array[0] # not hasItem
@@ -269,8 +267,8 @@ proc parseBracketExpr(scope: Scope, n: NimNode): Context =
   # need to parse first child and see if it has it
   #  if yes then ContextKind is ckOpTupleIndex
   #  else ckNode
-  var first = parseNode(scope, n[0])
-  var second = parseNode(scope, n[1])
+  var first = parseNode(n[0], scope)
+  var second = parseNode(n[1], scope)
   if first.hasItem:
     result = Context(kind: ckOpTupleIndex, nk: n.kind, tupleIndex: second.output.intVal.int, children: @[first])
   else:
@@ -278,12 +276,12 @@ proc parseBracketExpr(scope: Scope, n: NimNode): Context =
     result = Context(kind: ckNode, nk: n.kind, children: @[first, second])
   result.propHasItem()
 
-proc parsePrefix(scope: Scope, n: NimNode): Context =
+proc parsePrefix(n: NimNode, scope: Scope): Context =
   decho scope.depth, &"parsePrefix {n.repr}"
   var prefix = n[0].strVal
   var exp = n[1]
   if prefix in Operators:
-    var child = parseNode(scope, exp)
+    var child = parseNode(exp, scope)
     if child.hasItem:
       case prefix:
       of StringifyPrefix:
@@ -304,70 +302,70 @@ proc parsePrefix(scope: Scope, n: NimNode): Context =
       else:
         raiseAssert &"parsePrefix unexpected '{prefix}' in \"{n.repr}\" "
   else:
-    parseOtherNode(scope, n)
+    parseOtherNode(n, scope)
 
 
-proc parseSection(scope:Scope, n: NimNode): Context =
+proc parseSection(n: NimNode, scope:Scope): Context =
   decho scope.depth, &"parseSection {n.repr}"
   result = Context(kind: ckSection, nk: n.kind)
   for child in n:
     assert child.kind == nnkIdentDefs or child.kind == nnkTypeDef
-    result.children.add parseNode(scope, child)
+    result.children.add parseNode(child, scope)
   result.propHasItem()
 
 
-proc parseCaseStmt(scope: Scope, n: NimNode): Context = 
+proc parseCaseStmt(n: NimNode, scope: Scope): Context = 
   result = Context(kind: ckCaseStmt, nk: n.kind, hasItem: true)
   for child in n:
     case child.kind:
     of nnkOfBranch:
-      result.ofBranch = parseNode(scope, child)
+      result.ofBranch = parseNode(child, scope)
       assert result.ofBranch.hasItem
     of nnkElse:
-      result.elseBranch = parseNode(scope, child)
+      result.elseBranch = parseNode(child, scope)
       assert not result.elseBranch.hasItem
     else:
-      result.xpr = parseNode(scope, child)
+      result.xpr = parseNode(child, scope)
       assert not result.xpr.hasItem
 
 #[
-proc parseTypeDef(scope: Scope, n:NimNode): Context =
+proc parseTypeDef(n: NimNode, scope: Scope): Context =
   result = Context(kind: ckTypeDef, nk: n.kind)
-  result.children.add parsedNode(scope, n[0]) #typeName
-  result.children.add parseNode(scope, n[1]) # pragma
-  result.children.add parseNode(scope, n[2]) # typeImpl
+  result.children.add parsedNode(n[0], scope) #typeName
+  result.children.add parseNode(n[1], scope) # pragma
+  result.children.add parseNode(n[2], scope) # typeImpl
   result.propHashItem()
 
-#proc parseEnumTy(scope: Scope, n: NimNode): Context =
+#proc parseEnumTy(n: NimNode, scope: Scope): Context =
 #  echo n.treeRepr
 ]#
 
-proc parseNode(scope: Scope, n: NimNode): Context =
+proc parseNode(n: NimNode, scope: Scope): Context =
   decho scope.depth, &"parseNode {n.kind}"
   result = case n.kind:
     of LitKinds:
-      parseLitKind(scope, n)
+      parseLitKind(n, scope)
     of nnkCall, nnkCommand:
       if n[0].kind == nnkIdent and n[0].strVal == MacroName:
-        parseGen(scope, n)
+        parseGen(n, scope)
       else:
-        parseOtherNode(scope, n)
+        parseOtherNode(n, scope)
     of nnkAccQuoted:
-      parseAccQuoted(scope, n)
+      parseAccQuoted(n, scope)
     of nnkBracketExpr:
-      parseBracketExpr(scope, n)
+      parseBracketExpr(n, scope)
     of nnkPrefix:
-      parsePrefix(scope, n)
+      parsePrefix(n, scope)
     of nnkVarSection, nnkLetSection, nnkConstSection, nnkTypeSection:
-      parseSection(scope, n)
+      parseSection(n, scope)
     of nnkCaseStmt:
-      parseCaseStmt(scope, n)
+      parseCaseStmt(n, scope)
     #of nnkTypeDef:
-    #  parseTypeDef(scope, n)
+    #  parseTypeDef(n, scope)
     #of nnkEnumTy:
-    #  parseEnumTy(scope, n)
+    #  parseEnumTy(n, scope)
     else:
-      parseOtherNode(scope, n)
+      parseOtherNode(n, scope)
 
 #< Parsing functions
 
@@ -483,7 +481,7 @@ macro g*(args: varargs[untyped]): untyped =
   decho "-- AST"
   decho gNode.treeRepr
 
-  var c:Context = parseGen(nil, gNode)
+  var c:Context = parseGen(gNode, nil)
   
   decho "-- transform"
   if c.output == nil:
