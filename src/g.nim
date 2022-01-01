@@ -128,7 +128,6 @@ proc parseGen(parentScope: Scope, n: NimNode): Context =
   var scope = Scope(parent: parentScope, itsName: ItsName)
   if parentScope != nil:
     scope.depth = parentScope.depth
-  decho scope.depth, &"!!! parseGen assert n.kind == nnkStmtList {n.kind}"
   var c = Context(kind: ckGen, nk: nnkStmtList, body: n[^1], scope: scope)
 
   var args:seq[NimNode]
