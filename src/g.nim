@@ -40,6 +40,8 @@ type ContextKind = enum
     ckTypeSection
     ckTypeDef
     ckEnumTy
+    ckObjectTy
+    ckRecList
   
 type Scope = ref object
     parent: Scope
@@ -70,6 +72,8 @@ type Context = ref object
       of ckTypeSection: discard
       of ckTypeDef: discard
       of ckEnumTy: discard
+      of ckObjectTy: discard
+      of ckRecList: discard
       else: discard
 
 #> Debug
@@ -345,32 +349,38 @@ proc parseEnumTy(n: NimNode, scope: Scope): Context =
     result.children.add parseNode(child, scope)
   result.propHasItem()
 
+proc parseObjectTy(n: NimNode, scope: Scope): Context =
+  result = Context(kind: ckObjectTy, nk: n.kind)
+  for child in n:
+    result.children.add parseNode(child, scope)
+  result.propHasItem()
+
+proc parseRecList(n: NimNode, scope: Scope): Context =
+  result = Context(kind: ckRecList, nk: n.kind)
+  for child in n:
+    result.children.add parseNode(child, scope)
+  result.propHasItem()
+
 proc parseNode(n: NimNode, scope: Scope): Context =
   decho scope.depth, &"parseNode {n.kind}"
   result = case n.kind:
-    of LitKinds:
-      parseLitKind(n, scope)
+    of LitKinds: parseLitKind(n, scope)
     of nnkCall, nnkCommand:
       if n[0].kind == nnkIdent and n[0].strVal == MacroName:
         parseGen(n, scope)
       else:
         parseOtherNode(n, scope)
-    of nnkAccQuoted:
-      parseAccQuoted(n, scope)
-    of nnkBracketExpr:
-      parseBracketExpr(n, scope)
-    of nnkPrefix:
-      parsePrefix(n, scope)
-    of nnkVarSection, nnkLetSection, nnkConstSection, nnkTypeSection:
+    of nnkAccQuoted: parseAccQuoted(n, scope)
+    of nnkBracketExpr: parseBracketExpr(n, scope)
+    of nnkPrefix: parsePrefix(n, scope)
+    of nnkVarSection, nnkLetSection, nnkConstSection, nnkTypeSection: 
       parseSection(n, scope)
-    of nnkCaseStmt:
-      parseCaseStmt(n, scope)
-    of nnkTypeDef:
-      parseTypeDef(n, scope)
-    of nnkEnumTy:
-      parseEnumTy(n, scope)
-    else:
-      parseOtherNode(n, scope)
+    of nnkCaseStmt: parseCaseStmt(n, scope)
+    of nnkTypeDef: parseTypeDef(n, scope)
+    of nnkEnumTy: parseEnumTy(n, scope)
+    of nnkObjectTy: parseObjectTy(n, scope)
+    of nnkRecList: parseRecList(n, scope)
+    else: parseOtherNode(n, scope)
 
 #< Parsing functions
 
@@ -389,15 +399,21 @@ proc tfIt(c: Context, s: var ScopeIndexStack): NimNode =
 
 proc tfGen(c: Context, s: var ScopeIndexStack): NimNode =
   result = newNimNode(nnkStmtList)
-  s.add (c.scope, 0)
-  
-  for i in 0..<c.scope.items.len:
-    s[^1].index = i
+  if c.scope.items.len > 0:
+    s.add (c.scope, 0)
+    for i in 0..<c.scope.items.len:
+      s[^1].index = i
+      for child in c.children:
+        var o = child.tf(s)
+        if o != nil:
+          result.add o
+    discard s.pop()
+  else:
     for child in c.children:
       var o = child.tf(s)
       if o != nil:
         result.add o
-  discard s.pop()
+
 
 proc tfOp(c: Context, s: var ScopeIndexStack): NimNode =
   decho 0, "tfItem"
@@ -472,26 +488,32 @@ proc tfEnumTy(c: Context, s: var ScopeIndexStack): NimNode =
     s[^1].index = i
     result.add tf(def, s)
 
+proc tfObjectTy(c: Context, s: var ScopeIndexStack): NimNode =
+  result = newTree(nnkObjectTy, c.children[0].output, c.children[1].output)
+  result.add tf(c.children[2], s)
+
+proc tfRecList(c: Context, s: var ScopeIndexStack): NimNode =
+  result = newTree(nnkRecList)
+  for i in 0..<s[^1].scope.items.len:
+    s[^1].index = i
+    for def in c.children:
+      result.add tf(def, s)
+
 proc tf(c: Context, s: var ScopeIndexStack): NimNode =
   decho &"tf {c.kind} {c.hasItem}"
   if c.hasItem:
     case c.kind:
-    of ckIt:
-      tfIt(c, s)
-    of ckNamed:
-      c.output
-    of ckGen:
-      tfGen(c, s)
+    of ckIt: tfIt(c, s)
+    of ckNamed: c.output
+    of ckGen: tfGen(c, s)
     of ckOpTupleIndex, ckOpStringify, ckOpItIndex, ckOpCapitalize:
       tfOp(c, s)
-    of ckVarSection:
-      tfVarSection(c, s)
-    of ckCaseStmt:
-      tfCase(c, s)
-    of ckTypeSection:
-      tfTypeSection(c, s)
-    of ckEnumTy:
-      tfEnumTy(c, s)
+    of ckVarSection: tfVarSection(c, s)
+    of ckCaseStmt: tfCase(c, s)
+    of ckTypeSection: tfTypeSection(c, s)
+    of ckEnumTy: tfEnumTy(c, s)
+    of ckObjectTy: tfObjectTy(c, s)
+    of ckRecList: tfRecList(c, s)
     else:
       var n = newNimNode(c.nk)
       for child in c.children:
@@ -512,11 +534,11 @@ macro g*(args: varargs[untyped]): untyped =
   var c:Context = parseGen(gNode, nil)
   
   decho "-- transform"
-  if c.output == nil:
-    var s:ScopeIndexStack
-    c.output = c.tfGen(s)
+  var s:ScopeIndexStack
+  c.output = c.tfGen(s)
   if c.output != nil:
     decho c.output.treeRepr
+    decho c.output.repr
   else:
     decho "invalid"
 

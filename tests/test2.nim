@@ -192,18 +192,18 @@ test "typedef enum it":
   check ord(bsFlyingBack) == 3
   check ord(FlyingUp) == 2
 
-#[
-test "typedef object":
-  gen(c = Component, red, green, blue):
-    type
-      RGB = object
-        `it c`*: float
 
+test "typedef object it":
+  g(c = Component):
+    g red, green, blue:
+      type
+        RGB = object
+          `it c`*: float
     var color = RGB(`red c`:1.0, `green c`:0.0, `blue c`:1.0)
 
+  check declared(RGB)
   check color.redComponent == 1
-
-
+#[
 test "set var, let via it expression":
   type Color = enum
     none = 0 
