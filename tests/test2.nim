@@ -153,10 +153,11 @@ test "case":
   
   let color = Green
 
-  let index1 = g((Red, (255, 0, 0)), (Green, (0, 255, 0)), (Blue, (0, 0, 255))):
-      case color:
-        of `it[0]`: it[1]
-        else: (0, 0, 0) 
+  g.debug:
+    let index1 = g((Red, (255, 0, 0)), (Green, (0, 255, 0)), (Blue, (0, 0, 255))):
+        case color:
+          of `it[0]`: it[1]
+          else: (0, 0, 0) 
 
   check index1 == (0, 255, 0)
 
@@ -203,8 +204,8 @@ test "typedef object it":
 
   check declared(RGB)
   check color.redComponent == 1
-#[
-test "set var, let via it expression":
+
+test "expand operator":
   type Color = enum
     none = 0 
     red = 1
@@ -212,16 +213,37 @@ test "set var, let via it expression":
     blue = 3
 
   let color = blue
-  gen(none, red, green, blue):
-    var varVal = case color:
-      of it: %it
-    let letVal = case varVal:
-      of %it: it
-      else: none 
-  
+
+  g(c = [none, red, green, blue]):
+    var varVal = g(~c):
+      case color:
+        of it: %it
+
+    let letVal = g(~c):
+      case varVal:
+        of %it: it
+        else: none 
+
   check varVal == 3
   check letVal == blue
 
+test "case inner gen":
+  type Color = enum
+    red
+    blue
+
+  var val = red
+  g.debug:
+    g(c = Color):
+      var answer = case val:
+        of red:
+          g("red"):
+            it
+        else:
+          g("blue"):
+            it
+  check answer == "red"
+#[
 test "set const via it expression":
   gen(none, red, green, blue):
     const `it Val` = %it

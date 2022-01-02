@@ -16,6 +16,7 @@ const ItsName = "it"
 const StringifyPrefix = "$$"
 const ItIndexPrefix = "%"
 const CapitalizePrefix = "^"
+const ExpandPrefix = "~"
 const Operators = [ StringifyPrefix, ItIndexPrefix, CapitalizePrefix ]
 const AccQuotedOperators = [ ItIndexPrefix, CapitalizePrefix ] # operators that work in accQuoted
 
@@ -64,11 +65,7 @@ type Context = ref object
       of ckOpTupleIndex: 
         tupleIndex: int
       of ckVarSection: discard
-      of ckCaseStmt:
-        # use these instead of children
-        xpr: Context
-        ofBranch: Context
-        elseBranch: Context
+      of ckCaseStmt: discard
       of ckTypeSection: discard
       of ckTypeDef: discard
       of ckEnumTy: discard
@@ -122,12 +119,13 @@ proc propHasItem(c:Context): Context {.discardable.} =
 
 proc parseNode(n: NimNode, scope: Scope): Context
 
-proc parseOtherNode(n: NimNode, scope: Scope): Context =
-  decho scope.depth, &"otherNode ckNode {n.kind}"
-  var c = Context(nk: n.kind, kind: ckNode)
+proc parseMulti(n: NimNode, scope: Scope, ck: ContextKind = ckNode): Context =
+  decho scope.depth, &"parseMulti {ck} {n.kind}"
+  result = Context(kind: ck, nk: n.kind)
   for child in n:
-    c.children.add parseNode(child, scope)
-  c.propHasItem()
+    result.children.add parseNode(child, scope)
+  result.propHasItem()
+
 
 proc parseGen(n:NimNode, parentScope: Scope): Context =
   var scope = Scope(parent: parentScope, itsName: ItsName)
@@ -140,17 +138,25 @@ proc parseGen(n:NimNode, parentScope: Scope): Context =
     args = n[1..^2]
 
   decho scope.depth, &"parseGen {args.repr}"
-
+  
   for arg in args:
     if arg.kind == nnkExprEqExpr:
-      if arg[0].repr == ItsName: # change its name
-        scope.itsName = arg[1].repr
-      else:
-        assert arg[0].kind == nnkIdent
-        let
-          key = arg[0].strVal
-          value = arg[1]
-        scope.named[key] = value # todo: check if this a nim fragment
+      var lhs = arg[0]
+      var rhs = arg[1]
+      if lhs.kind == nnkIdent:
+        if lhs.strVal == ItsName: # change its name
+          scope.itsName = rhs.strVal
+        else:
+          scope.named[lhs.strVal] = rhs # todo: check if this a nim fragment
+    elif arg.kind == nnkPrefix:
+      # handle expansion
+      var prefix = arg[0].strVal
+      var group = arg[1].strVal
+      if prefix == ExpandPrefix and parentScope.named.hasKey(group):
+        var items = parentScope.named[group]
+        assert items.kind == nnkBracket
+        for item in items:
+          scope.items.add item
     else:
       scope.items.add arg
 
@@ -158,6 +164,7 @@ proc parseGen(n:NimNode, parentScope: Scope): Context =
     c.children.add parseNode(s, scope)
 
   c.propHasItem()
+
 
 proc parseIdentKind(n: NimNode, scope: Scope): Context =
   decho scope.depth, "identKind"
@@ -192,6 +199,7 @@ proc parseLitKind(n: NimNode, scope: Scope): Context =
   else:
     decho scope.depth, &"LitKind {n.kind} {n.repr}"
     Context(nk: n.kind, kind: ckNode, output: n)
+
 
 type AccQuotedStateKind = enum
     aqkRoot
@@ -308,7 +316,7 @@ proc parsePrefix(n: NimNode, scope: Scope): Context =
       else:
         raiseAssert &"parsePrefix unexpected '{prefix}' in \"{n.repr}\" "
   else:
-    parseOtherNode(n, scope)
+    parseMulti(n, scope)
 
 
 proc parseSection(n: NimNode, scope:Scope): Context =
@@ -322,65 +330,29 @@ proc parseSection(n: NimNode, scope:Scope): Context =
   result.propHasItem()
 
 
-proc parseCaseStmt(n: NimNode, scope: Scope): Context = 
-  result = Context(kind: ckCaseStmt, nk: n.kind, hasItem: true)
-  for child in n:
-    case child.kind:
-    of nnkOfBranch:
-      result.ofBranch = parseNode(child, scope)
-      assert result.ofBranch.hasItem
-    of nnkElse:
-      result.elseBranch = parseNode(child, scope)
-      assert not result.elseBranch.hasItem
-    else:
-      result.xpr = parseNode(child, scope)
-      assert not result.xpr.hasItem
-
-proc parseTypeDef(n: NimNode, scope: Scope): Context =
-  result = Context(kind: ckTypeDef, nk: n.kind)
-  result.children.add parseNode(n[0], scope) #typeName
-  result.children.add parseNode(n[1], scope) # pragma
-  result.children.add parseNode(n[2], scope) # typeImpl
-  result.propHasItem()
-
-proc parseEnumTy(n: NimNode, scope: Scope): Context =
-  result = Context(kind: ckEnumTy, nk: n.kind)
-  for child in n:
-    result.children.add parseNode(child, scope)
-  result.propHasItem()
-
-proc parseObjectTy(n: NimNode, scope: Scope): Context =
-  result = Context(kind: ckObjectTy, nk: n.kind)
-  for child in n:
-    result.children.add parseNode(child, scope)
-  result.propHasItem()
-
-proc parseRecList(n: NimNode, scope: Scope): Context =
-  result = Context(kind: ckRecList, nk: n.kind)
-  for child in n:
-    result.children.add parseNode(child, scope)
-  result.propHasItem()
-
 proc parseNode(n: NimNode, scope: Scope): Context =
-  decho scope.depth, &"parseNode {n.kind}"
+  decho scope.depth, &"enter parseNode {n.kind}"
   result = case n.kind:
     of LitKinds: parseLitKind(n, scope)
     of nnkCall, nnkCommand:
       if n[0].kind == nnkIdent and n[0].strVal == MacroName:
         parseGen(n, scope)
       else:
-        parseOtherNode(n, scope)
+        parseMulti(n, scope)
     of nnkAccQuoted: parseAccQuoted(n, scope)
     of nnkBracketExpr: parseBracketExpr(n, scope)
     of nnkPrefix: parsePrefix(n, scope)
     of nnkVarSection, nnkLetSection, nnkConstSection, nnkTypeSection: 
       parseSection(n, scope)
-    of nnkCaseStmt: parseCaseStmt(n, scope)
-    of nnkTypeDef: parseTypeDef(n, scope)
-    of nnkEnumTy: parseEnumTy(n, scope)
-    of nnkObjectTy: parseObjectTy(n, scope)
-    of nnkRecList: parseRecList(n, scope)
-    else: parseOtherNode(n, scope)
+    of nnkCaseStmt: parseMulti(n, scope, ckCaseStmt)
+    of nnkTypeDef: parseMulti(n, scope, ckTypeDef)
+    of nnkEnumTy: parseMulti(n, scope, ckEnumTy)
+    of nnkObjectTy: parseMulti(n, scope, ckObjectTy)
+    of nnkRecList: parseMulti(n, scope, ckRecList)
+    else: parseMulti(n, scope)
+
+  decho scope.depth, &"exit parseNode {result.kind} {result.nk} {result.hasItem}"
+
 
 #< Parsing functions
 
@@ -397,22 +369,27 @@ proc tfIt(c: Context, s: var ScopeIndexStack): NimNode =
       return s[i].scope.items[ s[i].index ]
   raiseAssert &"Could not find \"{c.itsName}\" in scopes."
 
+
+proc tfInner(c: Context, s: var ScopeIndexStack, n: NimNode) =
+  if s[^1].scope.items.len > 0:
+    for i in 0..<s[^1].scope.items.len:
+      s[^1].index = i
+      var o = tf(c, s)
+      if o != nil:
+        n.add o
+  else:
+    var o = tf(c, s)
+    if o != nil:
+      n.add o
+
+
 proc tfGen(c: Context, s: var ScopeIndexStack): NimNode =
   result = newNimNode(nnkStmtList)
-  if c.scope.items.len > 0:
-    s.add (c.scope, 0)
-    for i in 0..<c.scope.items.len:
-      s[^1].index = i
-      for child in c.children:
-        var o = child.tf(s)
-        if o != nil:
-          result.add o
-    discard s.pop()
-  else:
-    for child in c.children:
-      var o = child.tf(s)
-      if o != nil:
-        result.add o
+  decho "tfGen"
+  s.add (c.scope, 0)
+  for child in c.children:
+    tfInner(child, s, result)
+  discard s.pop()
 
 
 proc tfOp(c: Context, s: var ScopeIndexStack): NimNode =
@@ -443,7 +420,10 @@ proc tfOp(c: Context, s: var ScopeIndexStack): NimNode =
 
 proc isOnLastItem(s: ScopeIndexStack): bool =
   # Used to delay output if we have a container construct, e.g.: section, case, type
-  s[^1].scope.items.len - 1 == s[^1].index
+  if s[^1].scope.items.len == 0: 
+    return true
+  else:
+    s[^1].scope.items.len - 1 == s[^1].index
 
 
 proc tfVarSection(c: Context, s: var ScopeIndexStack): NimNode =
@@ -452,9 +432,7 @@ proc tfVarSection(c: Context, s: var ScopeIndexStack): NimNode =
     result = newTree(c.nk)
     for defc in c.children:
       if defc.hasItem:
-        for i in 0..<s[^1].scope.items.len:
-          s[^1].index = i
-          result.add tf(defc, s)
+        tfInner(defc, s, result)
       else:
         result.add defc.output
 
@@ -462,12 +440,10 @@ proc tfVarSection(c: Context, s: var ScopeIndexStack): NimNode =
 proc tfCase(c: Context, s: var ScopeIndexStack): NimNode =
   # case should only return the entire case statement on the last index, of last scope item index
   if isOnLastItem(s):
-    result = newTree(nnkCaseStmt, c.xpr.output)
-    for i in 0..<s[^1].scope.items.len: # redo the indices for case's ofBranch
-      s[^1].index = i 
-      result.add c.ofBranch.tf(s)
-    if c.elseBranch != nil:
-      result.add c.elseBranch.output
+    result = newTree(nnkCaseStmt, c.children[0].output)
+    tfInner(c.children[1], s, result)
+    if c.children[^1].nk == nnkElse:
+      result.add c.children[^1].tf(s)
 
 
 proc tfTypeSection(c: Context, s: var ScopeIndexStack): NimNode =
