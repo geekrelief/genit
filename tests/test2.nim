@@ -1,6 +1,7 @@
 import unittest
 
 import g
+import std/macros
 
 test "no args":
   g:
@@ -86,7 +87,7 @@ test "unnamed args / enum":
 
 test "mixed named and unnamed args":
   g red, green, blue:
-    var `it State1`: State1 
+    var `it State1`: State1
 
   g red, green, blue:
     var `it State2`: State2
@@ -113,12 +114,13 @@ test "tuples":
   check greenState1.bComponent == 255
   check blueState1.cComponent == 255
 
+test "two operators":
   g (first, 1), (second, 2), (third, 3):
-    var `it[0]` = it[1] 
+    var `^it[0]` = it[1] 
 
-  check first == 1
-  check second == 2
-  check third == 3
+  check First == 1
+  check Second == 2
+  check Third == 3
 
 test "stringify and index":
   g red, green, blue:
@@ -153,11 +155,10 @@ test "case":
   
   let color = Green
 
-  g.debug:
-    let index1 = g((Red, (255, 0, 0)), (Green, (0, 255, 0)), (Blue, (0, 0, 255))):
-        case color:
-          of `it[0]`: it[1]
-          else: (0, 0, 0) 
+  let index1 = g((Red, (255, 0, 0)), (Green, (0, 255, 0)), (Blue, (0, 0, 255))):
+    case color:
+      of `it[0]`: it[1]
+      else: (0, 0, 0) 
 
   check index1 == (0, 255, 0)
 
@@ -233,32 +234,33 @@ test "case inner gen":
     blue
 
   var val = red
-  g.debug:
-    g(c = Color):
-      var answer = case val:
-        of red:
-          g("red"):
-            it
-        else:
-          g("blue"):
-            it
+  g(c = Color):
+    var answer = case val:
+      of red:
+        g("red"):
+          it
+      else:
+        g("blue"):
+          it
   check answer == "red"
-#[
+
 test "set const via it expression":
-  gen(none, red, green, blue):
+  g(none, red, green, blue):
     const `it Val` = %it
   
   check redVal == 1
 
-test "with enum":
 
-  type Color = enum
+test "with enum":
+  template mypragma() {.pragma.}
+
+  type Color {.mypragma.} = enum
     none
     red
     green
     blue
 
-  genWith(Color):
+  gw Color:
     var `^it` = $$it
   
   check Red == "red"
@@ -269,8 +271,7 @@ test "with enum":
     ngreen = 2
     nblue = 3
 
-  genWith(NumberColor):
+  gw NumberColor:
     var `^it[0]` = it[1]
   
   check Nred == 1
-  ]#

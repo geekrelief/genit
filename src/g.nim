@@ -10,6 +10,7 @@
 #     Modify `tfOp` for operations
 
 import std / [ macros, tables, strformat, genasts, strutils ]
+from sequtils import anyIt
 
 const MacroName = "g"
 const ItsName = "it"
@@ -201,73 +202,91 @@ proc parseLitKind(n: NimNode, scope: Scope): Context =
     Context(nk: n.kind, kind: ckNode, output: n)
 
 
-type AccQuotedStateKind = enum
-    aqkRoot
-    aqkIt
-    aqkBracketOpen
-    aqkTupleIndex
-    aqkPrefix
+type AccQuotedState = enum
+  aqRoot
+  aqIt
+  aqBracketOpen
+  aqTupleIndex
+  aqPrefix
 
-type AccQuotedState = object
-    case kind: AccQuotedStateKind
-    of aqkTupleIndex:
-      tupleIndex: int
-    of aqkPrefix:
-      head: Context
-      tail: Context
-    else:
-      discard
+
+proc addOpChainToContext(root:var Context, chain: var seq[Context]) =
+  if chain.len > 0:
+    var c = chain[0]
+    # construct the chain and add it to root
+    for i in 1..<chain.len:
+      var parentC = chain[i]
+      parentC.children.add c
+      parentC.hasItem = c.hasItem
+      c = parentC
+    root.children.add c
+  chain.setLen 0
 
 proc parseAccQuoted(n: NimNode, scope: Scope): Context =
   decho scope.depth, &"parseAccQuoted"
   decho 0, n.treeRepr
-  var c = Context(kind: ckAccQuoted, nk: nnkAccQuoted)
-  result = c
-  var state = AccQuotedState(kind: aqkRoot)
-  for id in n:
-    decho scope.depth, &"{state.kind} '{id.kind = }' '{id.repr = }'"
-    var childContext = parseNode(id, scope)
-    case state.kind:
-    of aqkRoot:
-      if childContext.hasItem:
-        state = AccQuotedState(kind: aqkIt)
-      else:
-        let op = childContext.output.strVal
-        if op in AccQuotedOperators:
-          if op == ItIndexPrefix:
-            childContext = Context(kind: ckOpItIndex)
-          elif op == CapitalizePrefix:
-            childContext = Context(kind: ckOpCapitalize)
-          state = AccQuotedState(kind: aqkPrefix, head: childContext, tail: childContext)
-        #
-      # if
-      c.children.add childContext
-    of aqkIt:
-      if childContext.output.strVal == "[":
-        state = AccQuotedState(kind: aqkBracketOpen)
-      else:
-        c.children.add childContext
-        state = AccQuotedState(kind: aqkRoot)
-    of aqkBracketOpen:
-      assert childContext.nk == nnkIdent
-      state = AccQuotedState(kind: aqkTupleIndex, tupleIndex: parseInt(childContext.output.strVal))
-    of aqkTupleIndex:
-      assert childContext.kind == ckNode 
-      assert childContext.output.strVal == "]"
-      var tupleIndexContext = Context(kind: ckOpTupleIndex, tupleIndex: state.tupleIndex, hasItem: true)
-      var containerContext = c.children.pop()
-      tupleIndexContext.children.add containerContext
-      c.children.add tupleIndexContext
-      state = AccQuotedState(kind: aqkIt)
-    of aqkPrefix:
-      assert childContext.hasItem
-      state.head.hasItem = true
-      state.tail.children.add childContext
-      state = AccQuotedState(kind: aqkRoot)
+  var root = Context(kind: ckAccQuoted, nk: nnkAccQuoted)
+  result = root
 
-  c.propHasItem()
-  if not c.hasItem:
-    decho scope.depth, &"parseAccQuoted output: {c.output.repr}"
+  var chain: seq[Context] # points to the current child chain for the root
+  var tupleIndex: int
+  var state: AccQuotedState = aqRoot
+
+  for id in n:
+    decho scope.depth, &"--> {state} '{id.kind = }' '{id.repr = }'"
+    var childContext = parseNode(id, scope)
+    case state:
+    of aqRoot:
+      root.addOpChainToContext(chain)
+      if childContext.hasItem:
+        state = aqIt
+        chain.add childContext
+      elif AccQuotedOperators.anyIt(it in childContext.output.strVal):
+        state = aqPrefix
+        let op = childContext.output.strVal
+        assert op.len == 1, "only one prefix operator allowed"
+        if op == ItIndexPrefix:
+          childContext = Context(kind: ckOpItIndex)
+        elif op == CapitalizePrefix:
+          childContext = Context(kind: ckOpCapitalize)
+        chain.add childContext
+      else:
+        # stay at root
+        root.children.add childContext
+    of aqIt:
+      assert not childContext.hasItem, "item identifier appeared again?"
+      if childContext.output.strVal == "[":
+        state = aqBracketOpen
+      else:
+        root.addOpChainToContext(chain)
+        root.children.add childContext
+        state = aqRoot
+    of aqBracketOpen:
+      # only accept ints
+      try:
+        tupleIndex = parseInt(childContext.output.strVal)
+      except ValueError:
+        raiseAssert &"Tuple index must be a static int : {lineinfo(n)}"
+      state = aqTupleIndex
+    of aqTupleIndex:
+      assert childContext.output.strVal == "]"
+      var itContext = chain[0]
+      var rest = chain[1..^1]
+      chain.setLen 0
+      chain.add( @[itContext, Context(kind: ckOpTupleIndex, tupleIndex: tupleIndex, hasItem: true)] )
+      chain.add rest
+      state = aqIt
+    of aqPrefix:
+      chain.insert(childContext, 0)
+      if childContext.hasItem:
+        state = aqIt
+      else:
+        state = aqRoot
+
+  root.addOpChainToContext(chain)
+  root.propHasItem()
+  if not root.hasItem:
+    decho scope.depth, &"parseAccQuoted output: {root.output.repr}"
 
 
 proc parseBracketExpr(n: NimNode, scope: Scope): Context =
@@ -412,7 +431,7 @@ proc tfOp(c: Context, s: var ScopeIndexStack): NimNode =
         break
   of ckOpCapitalize:
     var n = first.tf(s)
-    assert first.nk == nnkIdent
+    decho &"----- !!! tfOp capitalize {n.treeRepr}"
     result = ident(n.strVal.capitalizeAscii)
   else:
     discard
@@ -519,3 +538,26 @@ macro g*(args: varargs[untyped]): untyped =
     decho "invalid"
 
   result = c.output
+
+
+macro gw*(arg: typed, body: untyped): untyped =
+  expectKind arg, nnkSym
+  let impl = getImpl(arg)
+  expectMinLen impl, 3 # Sym | PragmaExpr, GenericParams | Empty, EnumTy | ObjectTy | ?
+
+  result = nnkCall.newTree(ident(MacroName))
+
+  let ty = impl[2]
+  case ty.kind:
+  of nnkEnumTy:
+    for f in ty:
+      if f.kind == nnkEmpty: continue
+
+      if f.kind == nnkEnumFieldDef:
+        result.add nnkTupleConstr.newTree(f[0], f[1])
+      elif f.kind == nnkSym:
+        result.add f
+  else:
+    raiseAssert &"Unimplemented \"{ty.kind}\"."
+
+  result.add body
