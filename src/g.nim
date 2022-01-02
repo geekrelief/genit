@@ -250,6 +250,8 @@ proc parseAccQuoted(n: NimNode, scope: Scope): Context =
         elif op == CapitalizePrefix:
           childContext = Context(kind: ckOpCapitalize)
         chain.add childContext
+      elif StringifyPrefix in childContext.output.strVal:
+        error(&"Stringify operator, '$$', not allowed in identifier", n)
       else:
         # stay at root
         root.children.add childContext
@@ -266,7 +268,7 @@ proc parseAccQuoted(n: NimNode, scope: Scope): Context =
       try:
         tupleIndex = parseInt(childContext.output.strVal)
       except ValueError:
-        raiseAssert &"Tuple index must be a static int : {lineinfo(n)}"
+        error(&"Tuple index must be a static int.", n)
       state = aqTupleIndex
     of aqTupleIndex:
       assert childContext.output.strVal == "]"
@@ -333,7 +335,8 @@ proc parsePrefix(n: NimNode, scope: Scope): Context =
       of CapitalizePrefix:
         Context(kind: ckNode, output: ident(child.output.strVal.capitalizeAscii))
       else:
-        raiseAssert &"parsePrefix unexpected '{prefix}' in \"{n.repr}\" "
+        error(&"parsePrefix unexpected '{prefix}'", n)
+        nil
   else:
     parseMulti(n, scope)
 
@@ -386,7 +389,7 @@ proc tfIt(c: Context, s: var ScopeIndexStack): NimNode =
   for i in countDown(s.len - 1, 0):
     if s[i].scope.itsName == c.itsName:
       return s[i].scope.items[ s[i].index ]
-  raiseAssert &"Could not find \"{c.itsName}\" in scopes."
+  error(&"Could not find \"{c.itsName}\" in scopes.")
 
 
 proc tfInner(c: Context, s: var ScopeIndexStack, n: NimNode) =
@@ -558,6 +561,6 @@ macro gw*(arg: typed, body: untyped): untyped =
       elif f.kind == nnkSym:
         result.add f
   else:
-    raiseAssert &"Unimplemented \"{ty.kind}\"."
+    error(&"Unimplemented \"{ty.kind}\".", arg)
 
   result.add body
