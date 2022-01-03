@@ -275,3 +275,48 @@ test "with enum":
     var `^it[0]` = it[1]
   
   check Nred == 1
+
+test "max":
+  var max = 0
+  g(1, 4, 6, 8):
+    if max < it:
+      max = it
+  check max == 8
+
+test "with array":
+  var max = 0
+  var a = [1, 4, 6, 8]
+  gw a:
+    if max < it:
+      max = it
+  check max == 8
+
+test "with object":
+  type Color = object
+    r, g, b: uint8
+  
+  var c: Color
+
+  gw Color:
+    c.it = 255'u8
+  
+  check c.r == 255'u8
+  check c.g == 255'u8
+  check c.b == 255'u8
+
+  gw c:
+    c.it = 1'u8
+  check c.r == 1'u8
+
+test "with tuple":
+  var val = (1, 2)
+  var res: int
+  gw val:
+    res = it
+  check res == 2
+
+  type Person = tuple[name: string, age: int]
+  var sue = (name: "Sue", age: 100)
+  var twin: Person
+  gw sue:
+    twin.it = sue.it

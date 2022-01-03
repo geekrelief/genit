@@ -542,25 +542,50 @@ macro g*(args: varargs[untyped]): untyped =
 
   result = c.output
 
+proc expandArg(src: NimNode, arg:NimNode, dest: NimNode) =
+  for f in src:
+    case f.kind:
+    of nnkEmpty: discard
+    of nnkEnumFieldDef:
+      dest.add nnkTupleConstr.newTree(f[0], f[1])
+    of nnkRecList:
+      for identDefs in f:
+        for id in identDefs[0 ..< ^2]:
+          dest.add id
+    of nnkIdentDefs:
+      dest.add f[0]
+    of nnkExprColonExpr:
+      dest.add f[0]
+    else:
+      dest.add f
 
 macro gw*(arg: typed, body: untyped): untyped =
   expectKind arg, nnkSym
-  let impl = getImpl(arg)
-  expectMinLen impl, 3 # Sym | PragmaExpr, GenericParams | Empty, EnumTy | ObjectTy | ?
+  var impl = getImpl(arg)
 
   result = nnkCall.newTree(ident(MacroName))
 
-  let ty = impl[2]
-  case ty.kind:
-  of nnkEnumTy:
-    for f in ty:
-      if f.kind == nnkEmpty: continue
+  case impl.kind:
+  of nnkTypeDef:
+    expandArg(impl[2], arg, result)
+  of nnkIdentDefs:
+    let identDef = impl
+    if identDef[2].kind != nnkEmpty:
+      if identDef[2].kind in [nnkBracket, nnkTupleConstr]:
+        expandArg(identDef[2], arg, result)
+      else:
+        let kind = identDef[2].kind
+        error(&"Cannot expand \"{kind}\" from \"{arg.repr}\".", arg)
 
-      if f.kind == nnkEnumFieldDef:
-        result.add nnkTupleConstr.newTree(f[0], f[1])
-      elif f.kind == nnkSym:
-        result.add f
+    elif identDef[1].kind != nnkEmpty:
+      impl = getImpl(identDef[1])
+      if impl.kind == nnkTypeDef:
+        expandArg(impl[2], arg, result)
+      else:
+        error(&"Unknown var type \"{impl.kind}\".", arg)
+    else:
+      error(&"{identDef.treeRepr}")
   else:
-    error(&"Unimplemented \"{ty.kind}\".", arg)
+    error(&"Unimplemented \"{impl.kind}\".", arg)
 
   result.add body
