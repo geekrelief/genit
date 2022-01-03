@@ -116,11 +116,11 @@ test "tuples":
 
 test "two operators":
   g (first, 1), (second, 2), (third, 3):
-    var `^it[0]` = it[1] 
+    var `^it[0]` = $$it[1] 
 
-  check First == 1
-  check Second == 2
-  check Third == 3
+  check First == "1"
+  check Second == "2"
+  check Third == "3"
 
 test "stringify and index":
   g red, green, blue:
