@@ -12,7 +12,8 @@
 import std / [ macros, tables, strformat, genasts, strutils ]
 from sequtils import anyIt
 
-const MacroName = "g"
+const MacroTransformerName = "gen"
+const MacroTransformerExName = "genx"
 const ItsName = "it"
 const StringifyPrefix = "$$"
 const ItIndexPrefix = "%"
@@ -28,6 +29,7 @@ const StrLitKinds* = { nnkStrLit..nnkTripleStrLit, nnkCommentStmt, nnkIdent, nnk
 const LitKinds* = EmptyKinds + IntKinds + FloatKinds + StrLitKinds
 
 type ContextKind = enum
+    ckEmpty
     ckNode
     ckGen
     ckIt
@@ -52,7 +54,7 @@ type Scope = ref object
     named: Table[string, NimNode]
     items: seq[NimNode]
   
-type Context = ref object
+type Context = object
     nk: NimNodeKind # output kind
     output: NimNode # cached output
     hasItem: bool
@@ -103,7 +105,7 @@ proc decho(msg:string) {.compileTime.} =
 
 #> Parsing helper functions
 
-proc propHasItem(c:Context): Context {.discardable.} =
+proc propHasItem(c:var Context): Context {.discardable.} =
   for child in c.children:
     if child.hasItem:
       c.hasItem = true
@@ -169,28 +171,22 @@ proc parseGen(n:NimNode, parentScope: Scope): Context =
 
 proc parseIdentKind(n: NimNode, scope: Scope): Context =
   #decho scope.depth, "identKind"
-  var c:Context
+  result = Context(kind: ckNode, nk: nnkIdent, output: n)
   block transform:
     var curScope = scope
     while curScope != nil: 
       for lhs, rhs in curScope.named:
         if n.strVal == lhs:
           #decho scope.depth, &"ckNamed nnkIdent ({lhs} => {rhs.repr})"
-          c = Context(nk: nnkIdent, kind: ckNamed, output: rhs)
+          result = Context(nk: nnkIdent, kind: ckNamed, output: rhs)
           break transform
 
       if n.strVal == curScope.itsName:
         #decho scope.depth, &"ckIt nnkIdent {curScope.itsName}"
-        c = Context(nk: nnkIdent, kind: ckIt, itsName: curScope.itsName, hasItem: true)
+        result = Context(nk: nnkIdent, kind: ckIt, itsName: curScope.itsName, hasItem: true)
         break transform
 
       curScope = curScope.parent
-
-  if c.isNil:
-    # some other identifier
-    #decho scope.depth, &"ckNode nnkIdent {n.repr}"
-    c = Context(kind: ckNode, nk: nnkIdent, output: n)
-  result = c
 
 
 proc parseLitKind(n: NimNode, scope: Scope): Context =
@@ -225,8 +221,7 @@ proc addOpChainToContext(root:var Context, chain: var seq[Context]) =
 proc parseAccQuoted(n: NimNode, scope: Scope): Context =
   #decho scope.depth, &"parseAccQuoted"
   #decho 0, n.treeRepr
-  var root = Context(kind: ckAccQuoted, nk: nnkAccQuoted)
-  result = root
+  result = Context(kind: ckAccQuoted, nk: nnkAccQuoted)
 
   var chain: seq[Context] # points to the current child chain for the root
   var tupleIndex: int
@@ -237,7 +232,7 @@ proc parseAccQuoted(n: NimNode, scope: Scope): Context =
     var childContext = parseNode(id, scope)
     case state:
     of aqRoot:
-      root.addOpChainToContext(chain)
+      result.addOpChainToContext(chain)
       if childContext.hasItem:
         state = aqIt
         chain.add childContext
@@ -254,14 +249,14 @@ proc parseAccQuoted(n: NimNode, scope: Scope): Context =
         error(&"Stringify operator, '$$', not allowed in identifier", n)
       else:
         # stay at root
-        root.children.add childContext
+        result.children.add childContext
     of aqIt:
       assert not childContext.hasItem, "item identifier appeared again?"
       if childContext.output.strVal == "[":
         state = aqBracketOpen
       else:
-        root.addOpChainToContext(chain)
-        root.children.add childContext
+        result.addOpChainToContext(chain)
+        result.children.add childContext
         state = aqRoot
     of aqBracketOpen:
       # only accept ints
@@ -285,10 +280,10 @@ proc parseAccQuoted(n: NimNode, scope: Scope): Context =
       else:
         state = aqRoot
 
-  root.addOpChainToContext(chain)
-  root.propHasItem()
-  #if not root.hasItem:
-    #decho scope.depth, &"parseAccQuoted output: {root.output.repr}"
+  result.addOpChainToContext(chain)
+  result.propHasItem()
+  #if not result.hasItem:
+    #decho scope.depth, &"parseAccQuoted output: {result.output.repr}"
 
 
 proc parseBracketExpr(n: NimNode, scope: Scope): Context =
@@ -326,7 +321,7 @@ proc parsePrefix(n: NimNode, scope: Scope): Context =
       of CapitalizePrefix:
         Context(kind: ckOpCapitalize, hasItem: true, children: @[child])
       else: 
-        nil
+        Context(kind: ckEmpty)
     else:
       assert child.output.kind == nnkIdent
       case prefix:
@@ -336,7 +331,7 @@ proc parsePrefix(n: NimNode, scope: Scope): Context =
         Context(kind: ckNode, output: ident(child.output.strVal.capitalizeAscii))
       else:
         error(&"parsePrefix unexpected '{prefix}'", n)
-        nil
+        Context(kind: ckEmpty)
   else:
     parseMulti(n, scope)
 
@@ -357,7 +352,7 @@ proc parseNode(n: NimNode, scope: Scope): Context =
   result = case n.kind:
     of LitKinds: parseLitKind(n, scope)
     of nnkCall, nnkCommand:
-      if n[0].kind == nnkIdent and n[0].strVal == MacroName:
+      if n[0].kind == nnkIdent and n[0].strVal == MacroTransformerName:
         parseGen(n, scope)
       else:
         parseMulti(n, scope)
@@ -416,7 +411,7 @@ proc tfGen(c: Context, s: var ScopeIndexStack): NimNode =
 
 proc tfOp(c: Context, s: var ScopeIndexStack): NimNode =
   #decho 0, "tfItem"
-  var first = if c.children.len > 0 : c.children[0] else: nil
+  var first = if c.children.len > 0 : c.children[0] else: Context(kind: ckEmpty)
   case c.kind:
   of ckOpTupleIndex:
     var n = first.tf(s)
@@ -519,9 +514,9 @@ proc tf(c: Context, s: var ScopeIndexStack): NimNode =
     c.output
 #< AST Transformers
 
-macro g*(args: varargs[untyped]): untyped =
+macro gen*(args: varargs[untyped]): untyped =
   var gNode = newNimNode(nnkCall)
-  gNode.add ident(MacroName)
+  gNode.add ident(MacroTransformerName)
   for a in args:
     gNode.add a
   #decho "-- AST"
@@ -542,7 +537,7 @@ macro g*(args: varargs[untyped]): untyped =
 
   result = c.output
 
-#> it over type fields
+#> == it over type fields
 proc isTypeDesc(n: NimNode): bool =
   var t = n.getType
   t.kind == nnkBracketExpr and t[0].kind == nnkSym and t[0].strVal == "typeDesc"
@@ -583,11 +578,11 @@ proc fieldsObject(src, ty, dst: NimNode) =
       error(&"Unexpected {def.kind = }", src)
 
 
-macro gw*(arg: typed, body: untyped): untyped =
+macro genx*(arg: typed, body: untyped): untyped =
   expectKind arg, nnkSym
   assert isTypeDesc(arg)
 
-  result = nnkCall.newTree(ident(MacroName))
+  result = nnkCall.newTree(ident(MacroTransformerName))
 
   var impl = arg.getImpl
   case impl.kind:
@@ -601,4 +596,4 @@ macro gw*(arg: typed, body: untyped): untyped =
     error(&"Unexpected \"{impl.kind}\".", arg)
 
   result.add body
-#< it over type fields
+#< == it over type fields
