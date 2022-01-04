@@ -424,7 +424,6 @@ proc tfOp(c: Context, s: var ScopeIndexStack): NimNode =
     result = n[c.tupleIndex]
   of ckOpStringify:
     var n = first.tf(s)
-    decho &"  ckOpStringify {n.repr}"
     result = newLit(n.repr)
   of ckOpItIndex:
     assert first.kind == ckIt
@@ -434,7 +433,6 @@ proc tfOp(c: Context, s: var ScopeIndexStack): NimNode =
         break
   of ckOpCapitalize:
     var n = first.tf(s)
-    decho &"----- !!! tfOp capitalize {n.treeRepr}"
     result = ident(n.strVal.capitalizeAscii)
   else:
     discard
@@ -542,50 +540,63 @@ macro g*(args: varargs[untyped]): untyped =
 
   result = c.output
 
-proc expandArg(src: NimNode, arg:NimNode, dest: NimNode) =
-  for f in src:
-    case f.kind:
-    of nnkEmpty: discard
+#> it over type fields
+proc isTypeDesc(n: NimNode): bool =
+  var t = n.getType
+  t.kind == nnkBracketExpr and t[0].kind == nnkSym and t[0].strVal == "typeDesc"
+
+
+proc fieldsEnum(src, ty, dst: NimNode) =
+  # EnumTy
+  for n in ty:
+    case n.kind
+    of nnkSym:
+      dst.add n
     of nnkEnumFieldDef:
-      dest.add nnkTupleConstr.newTree(f[0], f[1])
-    of nnkRecList:
-      for identDefs in f:
-        for id in identDefs[0 ..< ^2]:
-          dest.add id
-    of nnkIdentDefs:
-      dest.add f[0]
-    of nnkExprColonExpr:
-      dest.add f[0]
+      dst.add nnkTupleConstr.newTree(n[0], n[1])
+    of nnkEmpty: discard
     else:
-      dest.add f
+      error(&"Unsupported {n.kind}", src)
+
+proc fieldsObject(src, ty, dst: NimNode) =
+  # ObjectTy
+  # Used to check field accessibility.
+  let isSameModule = src.lineInfoObj.filename == ty.lineInfoObj.filename
+
+  var recList = ty[2]
+  for def in recList:
+    case def.kind:
+    of nnkIdentDefs:
+      for id in def[0 ..< ^2]:
+        case id.kind:
+        of nnkIdent, nnkSym:
+          if isSameModule:
+            dst.add id
+        of nnkPostFix:
+          dst.add id[1]
+        else:
+          error(&"Unexpected {id.kind = }", src)
+    of nnkEmpty: discard
+    else:
+      error(&"Unexpected {def.kind = }", src)
+
 
 macro gw*(arg: typed, body: untyped): untyped =
   expectKind arg, nnkSym
-  var impl = getImpl(arg)
+  assert isTypeDesc(arg)
 
   result = nnkCall.newTree(ident(MacroName))
 
+  var impl = arg.getImpl
   case impl.kind:
   of nnkTypeDef:
-    expandArg(impl[2], arg, result)
-  of nnkIdentDefs:
-    let identDef = impl
-    if identDef[2].kind != nnkEmpty:
-      if identDef[2].kind in [nnkBracket, nnkTupleConstr]:
-        expandArg(identDef[2], arg, result)
-      else:
-        let kind = identDef[2].kind
-        error(&"Cannot expand \"{kind}\" from \"{arg.repr}\".", arg)
-
-    elif identDef[1].kind != nnkEmpty:
-      impl = getImpl(identDef[1])
-      if impl.kind == nnkTypeDef:
-        expandArg(impl[2], arg, result)
-      else:
-        error(&"Unknown var type \"{impl.kind}\".", arg)
-    else:
-      error(&"{identDef.treeRepr}")
+    var ty = impl[2]
+    case ty.kind:
+    of nnkEnumTy: fieldsEnum(arg, ty, result)
+    of nnkObjectTy: fieldsObject(arg, ty, result)
+    else: error(&"Unexpected {ty.kind}", arg)
   else:
-    error(&"Unimplemented \"{impl.kind}\".", arg)
+    error(&"Unexpected \"{impl.kind}\".", arg)
 
   result.add body
+#< it over type fields

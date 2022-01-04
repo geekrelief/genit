@@ -265,32 +265,21 @@ test "with enum":
   
   check Red == "red"
 
+test "with enum values":
   type NumberColor = enum
     nnone = -1
-    nred = 1
-    ngreen = 2
+    nred = (1, "red")
+    ngreen = "green"
     nblue = 3
 
   gw NumberColor:
-    var `^it[0]` = it[1]
+    var `^it[0]` = ($$it[0], it[1])
   
-  check Nred == 1
+  check Nred == ("nred", (1, "red"))
+  check Ngreen == ("ngreen", "green")
 
-test "max":
-  var max = 0
-  g(1, 4, 6, 8):
-    if max < it:
-      max = it
-  check max == 8
 
-test "with array":
-  var max = 0
-  var a = [1, 4, 6, 8]
-  gw a:
-    if max < it:
-      max = it
-  check max == 8
-
+import etype
 test "with object":
   type Color = object
     r, g, b: uint8
@@ -304,19 +293,10 @@ test "with object":
   check c.g == 255'u8
   check c.b == 255'u8
 
-  gw c:
-    c.it = 1'u8
-  check c.r == 1'u8
-
-test "with tuple":
-  var val = (1, 2)
-  var res: int
-  gw val:
-    res = it
-  check res == 2
-
-  type Person = tuple[name: string, age: int]
-  var sue = (name: "Sue", age: 100)
-  var twin: Person
-  gw sue:
-    twin.it = sue.it
+  var fc: FColor
+  gw FColor:
+    fc.it = 1f
+  
+  check fc.getR == 0f
+  check fc.getG == 1f
+  check fc.getB == 0f
