@@ -67,13 +67,6 @@ type Context = object
         itsName: string
       of ckOpTupleIndex: 
         tupleIndex: int
-      of ckVarSection: discard
-      of ckCaseStmt: discard
-      of ckTypeSection: discard
-      of ckTypeDef: discard
-      of ckEnumTy: discard
-      of ckObjectTy: discard
-      of ckRecList: discard
       else: discard
 
 #> Debug
