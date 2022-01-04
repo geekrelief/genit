@@ -560,7 +560,7 @@ proc fieldsEnum(src, ty, dst: NimNode) =
 
 proc fieldsObject(src, ty, dst: NimNode) =
   # ObjectTy
-  # Used to check field accessibility.
+  # Checks field accessibility.
   let isSameModule = src.lineInfoObj.filename == ty.lineInfoObj.filename
 
   var recList = ty[2]
