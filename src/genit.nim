@@ -169,7 +169,7 @@ runnableExamples:
 
   doAssert color.redComponent == 1
 ##
-## genWith Enum or Object
+## ``genWith`` Enum or Object
 ## ----------------------
 ## Iteration over enum and object fields can be done with ``genWith``.
 runnableExamples:
@@ -198,7 +198,21 @@ runnableExamples:
   doAssert c.r == 255'u8
   doAssert c.g == 255'u8
   doAssert c.b == 255'u8
+##
+## Debugging with ``print``
+## ------------------------
+## To see what ``gen`` produces, wrap it with the ``print`` macro.
+runnableExamples:
+  var sum = 0
+  print:
+    gen(1, 2, 3):
+      sum += it
+    
+  doAssert sum == 6
 
+  gen(1, 2, 3):
+    sum += it
+  doAssert sum == 12
 #
 # implementation
 # To extend the DSL: 
@@ -222,11 +236,11 @@ const ExpandPrefix = "~"
 const Operators = [ StringifyPrefix, ItIndexPrefix, CapitalizePrefix ]
 const AccQuotedOperators = [ ItIndexPrefix, CapitalizePrefix ] # operators that work in accQuoted
 
-const EmptyKinds* = { nnkNone, nnkEmpty, nnkNilLit }
-const IntKinds* = { nnkCharLit..nnkUint64Lit }
-const FloatKinds* = { nnkFloatLit..nnkFloat64Lit }
-const StrLitKinds* = { nnkStrLit..nnkTripleStrLit, nnkCommentStmt, nnkIdent, nnkSym }
-const LitKinds* = EmptyKinds + IntKinds + FloatKinds + StrLitKinds
+const EmptyKinds = { nnkNone, nnkEmpty, nnkNilLit }
+const IntKinds = { nnkCharLit..nnkUint64Lit }
+const FloatKinds = { nnkFloatLit..nnkFloat64Lit }
+const StrLitKinds = { nnkStrLit..nnkTripleStrLit, nnkCommentStmt, nnkIdent, nnkSym }
+const LitKinds = EmptyKinds + IntKinds + FloatKinds + StrLitKinds
 
 type ContextKind = enum
     ckEmpty
@@ -276,15 +290,12 @@ proc space(count: int): string =
 
 var debugFlag {.compileTime.} = false
 
-macro debug*(body: untyped): untyped =
+macro debug(body: untyped): untyped =
   debugFlag = true
   result = genast(body):
     body
     static:
-      debugOff()
-
-proc debugOff*() {.compileTime.} =
-  debugFlag = false
+      debugFlag = false
 
 proc decho(count:int, msg:string) {.compileTime, used.} =
   if debugFlag:
@@ -296,14 +307,13 @@ proc decho(msg:string) {.compileTime, used.} =
 var printFlag {.compileTime.} = false
 macro print*(body: untyped): untyped =
   ## This will print out what `gen` produces for debugging purposes.
+  ## Wrap the ``gen`` call with print.
   printFlag = true
   result = genast(body):
     body
     static:
-      printOff()
+      printFlag = false
 
-proc printOff*() {.compileTime.} =
-  printFlag = false
 #< Debug
 
 #> Parsing functions
@@ -723,6 +733,7 @@ proc tf(c: Context, s: var ScopeIndexStack): NimNode =
 #< AST Transformers
 
 macro gen*(args: varargs[untyped]): untyped =
+  ## Implements the DSL.
   var gNode = newNimNode(nnkCall)
   gNode.add ident(MacroTransformerName)
   for a in args:
@@ -782,6 +793,7 @@ proc fieldsObject(src, ty, dst: NimNode) =
 
 
 macro genWith*(arg: typed, body: untyped): untyped =
+  ## Calls ``gen`` with the fields of the enum or object type passed.
   expectKind arg, nnkSym
   assert isTypeDesc(arg)
 
