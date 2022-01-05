@@ -1,6 +1,6 @@
 import unittest
 
-import g
+import genit
 
 test "no args":
   gen:
@@ -205,7 +205,7 @@ test "typedef object it":
   check declared(RGB)
   check color.redComponent == 1
 
-test "expand operator":
+test "expand operator, array":
   type Color = enum
     none = 0 
     red = 1
@@ -215,6 +215,50 @@ test "expand operator":
   let color = blue
 
   gen(c = [none, red, green, blue]):
+    var varVal = gen(~c):
+      case color:
+        of it: %it
+
+    let letVal = gen(~c):
+      case varVal:
+        of %it: it
+        else: none 
+
+  check varVal == 3
+  check letVal == blue
+
+test "expand operator, tuple":
+  type Color = enum
+    none = 0 
+    red = 1
+    green = 2
+    blue = 3
+
+  let color = blue
+
+  gen(c = (none, red, green, blue)):
+    var varVal = gen(~c):
+      case color:
+        of it: %it
+
+    let letVal = gen(~c):
+      case varVal:
+        of %it: it
+        else: none 
+
+  check varVal == 3
+  check letVal == blue
+
+test "expand operator, seq":
+  type Color = enum
+    none = 0 
+    red = 1
+    green = 2
+    blue = 3
+
+  let color = blue
+
+  gen(c = @[none, red, green, blue]):
     var varVal = gen(~c):
       case color:
         of it: %it
@@ -259,7 +303,7 @@ test "with enum":
     green
     blue
 
-  genx Color:
+  genWith Color:
     var `^it` = $$it
   
   check Red == "red"
@@ -271,7 +315,7 @@ test "with enum values":
     ngreen = "green"
     nblue = 3
 
-  genx NumberColor:
+  genWith NumberColor:
     var `^it[0]` = ($$it[0], it[1])
   
   check Nred == ("nred", (1, "red"))
@@ -285,7 +329,7 @@ test "with object":
   
   var c: Color
 
-  genx Color:
+  genWith Color:
     c.it = 255'u8
   
   check c.r == 255'u8
@@ -293,7 +337,7 @@ test "with object":
   check c.b == 255'u8
 
   var fc: FColor
-  genx FColor:
+  genWith FColor:
     fc.it = 1f
   
   check fc.getR == 0f

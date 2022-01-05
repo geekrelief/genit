@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.5.0
+## :Version: 0.6.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -88,7 +88,49 @@ runnableExamples:
   doAssert Red == "red"
   doAssert Green == "green"
   doAssert Blue == "blue"
+##
+## Expansion
+## ---------
+## The ``~`` operator will expand an array, seq, or tuple.
+runnableExamples:
+  type Color = enum
+    none = 0 
+    red = 1
+    green = 2
+    blue = 3
 
+  let color = blue
+
+  gen(c = [none, red, green, blue]):
+    var varVal = gen(~c):
+      case color:
+        of it: %it
+
+    let letVal = gen(~c):
+      case varVal:
+        of %it: it
+        else: none 
+
+  doAssert varVal == 3
+  doAssert letVal == blue
+##
+## Multiple Statements and Nesting
+## -------------------------------
+## When using multiple states in a gen macro, each statement will be produced at least 
+## once even if there are no arguments. And each statement will be produced once 
+## for each unnamed argument using the item identifier, unless its a special construct
+## like a ``case`` statement or type definition. It's better to split the ``gen``
+## calls for clarity if possible.
+runnableExamples:
+  gen(c = Component):
+    gen(red, green, blue):
+      type
+        RGB = object
+          `it c`: float
+
+    var color = RGB(`red c`:1.0, `green c`:0.0, `blue c`:1.0)
+
+  doAssert color.redComponent == 1
 ##
 ## Special Constructs
 ## ------------------
@@ -117,258 +159,644 @@ runnableExamples:
   var index1 = getColor(color1)
   doAssert index1 == (0, 255, 0)
 
-  gen(c = Component, red, green, blue):
-    type
-      RGB = object
-        `it c`: float
+  gen(c = Component):
+    gen(red, green, blue):
+      type
+        RGB = object
+          `it c`: float
 
     var color = RGB(`red c`:1.0, `green c`:0.0, `blue c`:1.0)
 
   doAssert color.redComponent == 1
-
-## Enum
-## ----
-## Iteration over enums can be done with ``genWith``.
+##
+## genWith Enum or Object
+## ----------------------
+## Iteration over enum and object fields can be done with ``genWith``.
 runnableExamples:
-  type NumberColor = enum
+  type ColorIndex = enum
     none = -1
     red = 1
     green = 2
     blue = 3
 
-  genWith NumberColor:
+  genWith ColorIndex:
     var `^it[0]` = ($$it[0], it[1])
   
+  doAssert None == ("none", -1)
   doAssert Red == ("red", 1)
+  doAssert Green == ("green", 2)
+  doAssert Blue == ("blue", 3)
 
-#----- implementation
-import std / [strutils, macros]
+  type Color = object
+    r, g, b: uint8
+  
+  var c: Color
 
-const genName = "gen"
-const stringifyOp = "$$"
-const indexOp = "%"
-const capOp = "^"
+  genWith Color:
+    c.it = 255'u8
+  
+  doAssert c.r == 255'u8
+  doAssert c.g == 255'u8
+  doAssert c.b == 255'u8
 
-# helper procs for gen
-proc find(curNode:NimNode, match: seq[NimNode], index: int = 0): bool =
-  if curNode.len - index >= match.len:
-    for i in 0 ..< match.len:
-      if curNode[index + i] != match[i]:
-        return false
-    return true
-  else:
-    return false 
+#
+# implementation
+# To extend the DSL: 
+#   Capture what we're parsing in Nim to genit's Context nodes (NimNode -> Context)
+#     Modify the `parse` functions, update ContextKind / Context
+#     New operations need to be updated in parsePrefix and parseAccQuoted
+#     Context should set `hasItem` if it is an item or has one as a descendant.
+#   Once we have the entire Context tree, we can transform back to NimNodes
+#     Modify tf functions for traversing the Context tree
+#     Modify `tfOp` for operations
 
-proc replace(curNode: NimNode, match: NimNode, newNode: NimNode): NimNode =
-  if curNode == match:
-    return newNode
-  else:
-    if (curNode.kind == nnkCommand or curNode.kind == nnkCall) and (curNode[0].eqIdent(genName)):
-      # gen is nested, only process the body of the gen not its arguments
-      curNode[^1] = curNode[^1].replace(match, newNode)
-    else:
-      for i, c in curNode.pairs:
-        curNode[i] = c.replace(match, newNode)
+import std / [ macros, tables, strformat, genasts, strutils ]
+from sequtils import anyIt
 
-    return curNode
+const MacroTransformerName = "gen"
+const ItsName = "it"
+const StringifyPrefix = "$$"
+const ItIndexPrefix = "%"
+const CapitalizePrefix = "^"
+const ExpandPrefix = "~"
+const Operators = [ StringifyPrefix, ItIndexPrefix, CapitalizePrefix ]
+const AccQuotedOperators = [ ItIndexPrefix, CapitalizePrefix ] # operators that work in accQuoted
 
-proc replace(curNode: NimNode, match: seq[NimNode], newNode: NimNode): NimNode =
-  var i = 0
-  result = curNode.copyNimNode
-  # process children
-  while i < curNode.len:
-    if find(curNode, match, i):
-      result.add newNode
-      i += match.len
-    else:
-      result.add replace(curNode[i], match, newNode)
-      inc i
+const EmptyKinds* = { nnkNone, nnkEmpty, nnkNilLit }
+const IntKinds* = { nnkCharLit..nnkUint64Lit }
+const FloatKinds* = { nnkFloatLit..nnkFloat64Lit }
+const StrLitKinds* = { nnkStrLit..nnkTripleStrLit, nnkCommentStmt, nnkIdent, nnkSym }
+const LitKinds* = EmptyKinds + IntKinds + FloatKinds + StrLitKinds
 
-proc isIt(node: NimNode, it:NimNode): bool = 
-  # check for item identifer in identNode or wrapped in accent quotes
-  if node.eqIdent(it):
-    return true
-  if node.kind == nnkAccQuoted:
-    for c in node:
-      if c.eqIdent(it):
-        return true
-  return false
+type ContextKind = enum
+    ckEmpty
+    ckNode
+    ckGen
+    ckIt
+    ckNamed
+    ckAccQuoted
+    ckOpTupleIndex # it[n]
+    ckOpStringify # $$it = item -> "item"
+    ckOpItIndex # %it => item index
+    ckOpCapitalize # ^it = item -> Item
+    ckVarSection
+    ckCaseStmt
+    ckTypeSection
+    ckTypeDef
+    ckEnumTy
+    ckObjectTy
+    ckRecList
+  
+type Scope = ref object
+    parent: Scope
+    depth: int
+    itsName: string
+    named: Table[string, NimNode]
+    items: seq[NimNode]
+  
+type Context = object
+    nk: NimNodeKind # output kind
+    output: NimNode # cached output
+    hasItem: bool
+    children: seq[Context]
+    case kind: ContextKind
+      of ckGen:
+        scope: Scope
+        body: NimNode
+      of ckIt: 
+        itsName: string
+      of ckOpTupleIndex: 
+        tupleIndex: int
+      else: discard
 
-proc hasIt(node: NimNode, it:NimNode): bool =
-  # recursively check if tree has item identifier
-  if isIt(node, it):
-    return true
-  else:
-    for s in node:
-      if hasIt(s, it): return true
-  return false
+#> Debug
+proc space(count: int): string =
+  for i in 0..<count:
+    result.add "  "
 
-proc replaceIt(parentNode:NimNode, curNode:NimNode, it:NimNode, items:seq[NimNode]) =
-  if curNode.hasIt(it):
-    let sit = nnkPrefix.newTree(ident(stringifyOp), it)
-    let cit = nnkPrefix.newTree(ident(capOp), it)
-    let it_index = nnkPrefix.newTree(ident(indexOp), it)
-    for index, item in items.pairs:
-      var t = curNode.copyNimTree
-      var tlen = items[0].len
-      if tlen > 1:
-        # greedy match for tuple item index first
-        expectKind item, nnkTupleConstr
-        for i in 0..<tlen:
-          let itn = nnkBracketExpr.newTree(it, newLit(i)) # replace outside accented quote
-          let sitn = nnkPrefix.newTree(ident(stringifyOp), itn)
-          let citn = nnkPrefix.newTree(ident(capOp), itn)
+var debugFlag {.compileTime.} = false
 
-          t = t.replace(sitn, newLit(item[i].repr))
-          var citemn = item[i].repr
-          citemn[0] = citemn[0].toUpperAscii
+macro debug*(body: untyped): untyped =
+  debugFlag = true
+  result = genast(body):
+    body
+    static:
+      debugOff()
 
-          # replace inside accented quote
-          let caitn = @[ident(capOp), it, ident("["), ident($i), ident("]")] 
-          t = t.replace(caitn, ident(citemn))
-          let aitn = @[it, ident("["), ident($i), ident("]")]
-          t = t.replace(aitn, item[i])
+proc debugOff*() {.compileTime.} =
+  debugFlag = false
 
-          t = t.replace(citn, ident(citemn))
-          t = t.replace(itn, item[i])
+proc decho(count:int, msg:string) {.compileTime, used.} =
+  if debugFlag:
+    echo space(count), msg
 
-      t = t.replace(sit, newLit(item.repr))
+proc decho(msg:string) {.compileTime, used.} =
+  decho 0, msg
 
-      var citem = item.repr
-      citem[0] = citem[0].toUpperAscii
-      t = t.replace(cit, ident(citem))
-      let cait = @[ident(capOp), it] 
-      t = t.replace(cait, ident(citem))
+var printFlag {.compileTime.} = false
+macro print*(body: untyped): untyped =
+  ## This will print out what `gen` produces for debugging purposes.
+  printFlag = true
+  result = genast(body):
+    body
+    static:
+      printOff()
 
-      t = t.replace(it_index, newLit(index))
-      t = t.replace(it, item)
-      #echo "t: ", t.repr
-      parentNode.add t
-  else:
-    parentNode.add curNode.copyNimTree
+proc printOff*() {.compileTime.} =
+  printFlag = false
+#< Debug
 
-proc recurseIt(parentNode:NimNode, curNode:NimNode, it:NimNode, items:seq[NimNode]) =
-  case curNode.kind:
-    of nnkCaseStmt:
-      var caseNode = curNode.copyNimNode
-      parentNode.add caseNode
-      for b in curNode:
-        case b.kind:
-        of nnkOfBranch: replaceIt(caseNode, b, it, items)
-        else: caseNode.add b.copyNimTree
-    of nnkVarSection, nnkLetSection, nnkConstSection:
-      var section = curNode.copyNimNode
-      parentNode.add section
-      #check if def has it on left and/or right
-      for def in curNode:
-        var hasItLeft = false
-        var hasItRight = false
-        for n in def[0 ..< ^1]:
-          if n.hasIt(it):
-            hasItLeft = true
-            break
-        if def[^1].hasIt(it):
-          hasItRight = true
-        
-        # handle initialization via single it expression
-        if not hasItLeft and hasItRight:
-          var cdef = def.copyNimTree
-          cdef.del(def.len-1)
-          recurseIt(cdef, def[^1], it, items)
-          section.add cdef
+#> Parsing functions
+
+#> Parsing helper functions
+
+proc propHasItem(c:var Context): Context {.discardable.} =
+  for child in c.children:
+    if child.hasItem:
+      c.hasItem = true
+      break
+
+  if not c.hasItem:
+    var n = newNimNode(c.nk)
+    for child in c.children:
+      n.add child.output
+    c.output = n
+  c
+
+#< Parsing helper functions
+
+proc parseNode(n: NimNode, scope: Scope): Context
+
+proc parseMulti(n: NimNode, scope: Scope, ck: ContextKind = ckNode): Context =
+  #decho scope.depth, &"parseMulti {ck} {n.kind}"
+  result = Context(kind: ck, nk: n.kind)
+  for child in n:
+    result.children.add parseNode(child, scope)
+  result.propHasItem()
+
+
+proc parseGen(n:NimNode, parentScope: Scope): Context =
+  var scope = Scope(parent: parentScope, itsName: ItsName)
+  if parentScope != nil:
+    scope.depth = parentScope.depth
+  var c = Context(kind: ckGen, nk: nnkStmtList, body: n[^1], scope: scope)
+
+  var args:seq[NimNode]
+  if n.len > 2: 
+    args = n[1..^2]
+
+  #decho scope.depth, &"parseGen {args.repr}"
+  
+  for arg in args:
+    if arg.kind == nnkExprEqExpr:
+      var lhs = arg[0]
+      var rhs = arg[1]
+      if lhs.kind == nnkIdent:
+        if lhs.strVal == ItsName: # change its name
+          scope.itsName = rhs.strVal
         else:
-          replaceIt(section, def, it, items)
-
-      #for def in curNode:
-        #replaceIt(section, def, it, items)
-    of nnkObjectTy:
-      var objType = curNode.copyNimNode
-      parentNode.add objType
-      objType.add curNode[0].copyNimTree
-      objType.add curNode[1].copyNimTree
-      # loop over nnkRecList
-      var recList = curNode[2].copyNimNode
-      objType.add recList
-      for rec in curNode[2]:
-        recurseIt(recList, rec, it, items)
-    of nnkEnumTy:
-      var enumNode = curNode.copyNimNode
-      for c in curNode:
-        replaceIt(enumNode, c, it, items)
-      parentNode.add enumNode
-    of nnkIdentDefs, nnkConstDef:
-      replaceIt(parentNode, curNode, it, items)
-    of nnkTypeSection, nnkTypeDef:
-      var node = curNode.copyNimNode
-      parentNode.add node
-      for c in curNode:
-        recurseIt(node, c, it, items)
+          scope.named[lhs.strVal] = rhs # todo: check if this a nim fragment
+    elif arg.kind == nnkPrefix:
+      # handle expansion
+      var prefix = arg[0].strVal
+      var group = arg[1].strVal
+      if prefix == ExpandPrefix and parentScope.named.hasKey(group):
+        var items = parentScope.named[group]
+        
+        if items.kind == nnkPrefix and items[0].eqIdent("@"):
+          items = items[1]
+        assert items.kind == nnkBracket or items.kind == nnkTupleConstr, &"\nUnexpeted:\n{items.treeRepr}"
+        for item in items:
+          scope.items.add item
     else:
-      replaceIt(parentNode, curNode, it, items)
+      scope.items.add arg
+
+  for s in c.body:
+    c.children.add parseNode(s, scope)
+
+  c.propHasItem()
+
+
+proc parseIdentKind(n: NimNode, scope: Scope): Context =
+  #decho scope.depth, "identKind"
+  result = Context(kind: ckNode, nk: nnkIdent, output: n)
+  block transform:
+    var curScope = scope
+    while curScope != nil: 
+      for lhs, rhs in curScope.named:
+        if n.strVal == lhs:
+          #decho scope.depth, &"ckNamed nnkIdent ({lhs} => {rhs.repr})"
+          result = Context(nk: nnkIdent, kind: ckNamed, output: rhs)
+          break transform
+
+      if n.strVal == curScope.itsName:
+        #decho scope.depth, &"ckIt nnkIdent {curScope.itsName}"
+        result = Context(nk: nnkIdent, kind: ckIt, itsName: curScope.itsName, hasItem: true)
+        break transform
+
+      curScope = curScope.parent
+
+
+proc parseLitKind(n: NimNode, scope: Scope): Context =
+  result = case n.kind:
+  of nnkIdent: 
+    parseIdentKind(n, scope)
+  else:
+    #decho scope.depth, &"LitKind {n.kind} {n.repr}"
+    Context(nk: n.kind, kind: ckNode, output: n)
+
+
+type AccQuotedState = enum
+  aqRoot
+  aqIt
+  aqBracketOpen
+  aqTupleIndex
+  aqPrefix
+
+
+proc addOpChainToContext(root:var Context, chain: var seq[Context]) =
+  if chain.len > 0:
+    var c = chain[0]
+    # construct the chain and add it to root
+    for i in 1..<chain.len:
+      var parentC = chain[i]
+      parentC.children.add c
+      parentC.hasItem = c.hasItem
+      c = parentC
+    root.children.add c
+  chain.setLen 0
+
+proc parseAccQuoted(n: NimNode, scope: Scope): Context =
+  #decho scope.depth, &"parseAccQuoted"
+  #decho 0, n.treeRepr
+  result = Context(kind: ckAccQuoted, nk: nnkAccQuoted)
+
+  var chain: seq[Context] # points to the current child chain for the root
+  var tupleIndex: int
+  var state: AccQuotedState = aqRoot
+
+  for id in n:
+    #decho scope.depth, &"--> {state} '{id.kind = }' '{id.repr = }'"
+    var childContext = parseNode(id, scope)
+    case state:
+    of aqRoot:
+      result.addOpChainToContext(chain)
+      if childContext.hasItem:
+        state = aqIt
+        chain.add childContext
+      elif AccQuotedOperators.anyIt(it in childContext.output.strVal):
+        state = aqPrefix
+        let op = childContext.output.strVal
+        assert op.len == 1, "only one prefix operator allowed"
+        if op == ItIndexPrefix:
+          childContext = Context(kind: ckOpItIndex)
+        elif op == CapitalizePrefix:
+          childContext = Context(kind: ckOpCapitalize)
+        chain.add childContext
+      elif StringifyPrefix in childContext.output.strVal:
+        error(&"Stringify operator, '$$', not allowed in identifier", n)
+      else:
+        # stay at root
+        result.children.add childContext
+    of aqIt:
+      assert not childContext.hasItem, "item identifier appeared again?"
+      if childContext.output.strVal == "[":
+        state = aqBracketOpen
+      else:
+        result.addOpChainToContext(chain)
+        result.children.add childContext
+        state = aqRoot
+    of aqBracketOpen:
+      # only accept ints
+      try:
+        tupleIndex = parseInt(childContext.output.strVal)
+      except ValueError:
+        error(&"Tuple index must be a static int.", n)
+      state = aqTupleIndex
+    of aqTupleIndex:
+      assert childContext.output.strVal == "]"
+      var itContext = chain[0]
+      var rest = chain[1..^1]
+      chain.setLen 0
+      chain.add( @[itContext, Context(kind: ckOpTupleIndex, tupleIndex: tupleIndex, hasItem: true)] )
+      chain.add rest
+      state = aqIt
+    of aqPrefix:
+      chain.insert(childContext, 0)
+      if childContext.hasItem:
+        state = aqIt
+      else:
+        state = aqRoot
+
+  result.addOpChainToContext(chain)
+  result.propHasItem()
+  #if not result.hasItem:
+    #decho scope.depth, &"parseAccQuoted output: {result.output.repr}"
+
+
+proc parseBracketExpr(n: NimNode, scope: Scope): Context =
+  # first child:
+  #   BracketExpr it[0][1]
+  #   Ident array[0] # not hasItem
+  #   Ident it[0] # hasItem
+  # second child:
+  #   IntLit it[0]
+  #
+  # need to parse first child and see if it has it
+  #  if yes then ContextKind is ckOpTupleIndex
+  #  else ckNode
+  var first = parseNode(n[0], scope)
+  var second = parseNode(n[1], scope)
+  if first.hasItem:
+    result = Context(kind: ckOpTupleIndex, nk: n.kind, tupleIndex: second.output.intVal.int, children: @[first])
+  else:
+    # array[..it..], array[expr]
+    result = Context(kind: ckNode, nk: n.kind, children: @[first, second])
+  result.propHasItem()
+
+proc parsePrefix(n: NimNode, scope: Scope): Context =
+  #decho scope.depth, &"parsePrefix {n.repr}"
+  var prefix = n[0].strVal
+  var exp = n[1]
+  if prefix in Operators:
+    var child = parseNode(exp, scope)
+    if child.hasItem:
+      case prefix:
+      of StringifyPrefix:
+        Context(kind: ckOpStringify, hasItem: true, children: @[child])
+      of ItIndexPrefix:
+        Context(kind: ckOpItIndex, hasItem: true, children: @[child])
+      of CapitalizePrefix:
+        Context(kind: ckOpCapitalize, hasItem: true, children: @[child])
+      else: 
+        Context(kind: ckEmpty)
+    else:
+      assert child.output.kind == nnkIdent
+      case prefix:
+      of StringifyPrefix:
+        Context(kind: ckNode, output: newLit(child.output.repr))
+      of CapitalizePrefix:
+        Context(kind: ckNode, output: ident(child.output.strVal.capitalizeAscii))
+      else:
+        error(&"parsePrefix unexpected '{prefix}'", n)
+        Context(kind: ckEmpty)
+  else:
+    parseMulti(n, scope)
+
+
+proc parseSection(n: NimNode, scope:Scope): Context =
+  #decho scope.depth, &"parseSection {n.repr}"
+  if n.kind == nnkTypeSection:
+    result = Context(kind: ckTypeSection, nk: n.kind)
+  else:
+    result = Context(kind: ckVarSection, nk: n.kind)
+  for child in n:
+    result.children.add parseNode(child, scope)
+  result.propHasItem()
+
+
+proc parseNode(n: NimNode, scope: Scope): Context =
+  #decho scope.depth, &"enter parseNode {n.kind}"
+  result = case n.kind:
+    of LitKinds: parseLitKind(n, scope)
+    of nnkCall, nnkCommand:
+      if n[0].kind == nnkIdent and n[0].strVal == MacroTransformerName:
+        parseGen(n, scope)
+      else:
+        parseMulti(n, scope)
+    of nnkAccQuoted: parseAccQuoted(n, scope)
+    of nnkBracketExpr: parseBracketExpr(n, scope)
+    of nnkPrefix: parsePrefix(n, scope)
+    of nnkVarSection, nnkLetSection, nnkConstSection, nnkTypeSection: 
+      parseSection(n, scope)
+    of nnkCaseStmt: parseMulti(n, scope, ckCaseStmt)
+    of nnkTypeDef: parseMulti(n, scope, ckTypeDef)
+    of nnkEnumTy: parseMulti(n, scope, ckEnumTy)
+    of nnkObjectTy: parseMulti(n, scope, ckObjectTy)
+    of nnkRecList: parseMulti(n, scope, ckRecList)
+    else: parseMulti(n, scope)
+
+  #decho scope.depth, &"exit parseNode {result.kind} {result.nk} {result.hasItem}"
+
+
+#< Parsing functions
+
+
+#> AST Transformers
+type ScopeIndex = tuple[scope: Scope, index: int]
+type ScopeIndexStack = seq[ScopeIndex]
+
+proc tf(c: Context, s: var ScopeIndexStack): NimNode
+
+proc tfIt(c: Context, s: var ScopeIndexStack): NimNode =
+  for i in countDown(s.len - 1, 0):
+    if s[i].scope.itsName == c.itsName:
+      return s[i].scope.items[ s[i].index ]
+  error(&"Could not find \"{c.itsName}\" in scopes.")
+
+
+proc tfInner(c: Context, s: var ScopeIndexStack, n: NimNode) =
+  if s[^1].scope.items.len > 0:
+    for i in 0..<s[^1].scope.items.len:
+      s[^1].index = i
+      var o = tf(c, s)
+      if o != nil:
+        n.add o
+  else:
+    var o = tf(c, s)
+    if o != nil:
+      n.add o
+
+
+proc tfGen(c: Context, s: var ScopeIndexStack): NimNode =
+  result = newNimNode(nnkStmtList)
+  #decho "tfGen"
+  s.add (c.scope, 0)
+  for child in c.children:
+    tfInner(child, s, result)
+  discard s.pop()
+
+
+proc tfOp(c: Context, s: var ScopeIndexStack): NimNode =
+  #decho 0, "tfItem"
+  var first = if c.children.len > 0 : c.children[0] else: Context(kind: ckEmpty)
+  case c.kind:
+  of ckOpTupleIndex:
+    var n = first.tf(s)
+    assert n.kind == nnkTupleConstr
+    result = n[c.tupleIndex]
+  of ckOpStringify:
+    var n = first.tf(s)
+    result = newLit(n.repr)
+  of ckOpItIndex:
+    assert first.kind == ckIt
+    for i in countDown(s.len-1, 0):
+      if s[i].scope.itsName == first.itsName:
+        result = newLit(s[i].index)
+        break
+  of ckOpCapitalize:
+    var n = first.tf(s)
+    result = ident(n.strVal.capitalizeAscii)
+  else:
+    discard
+
+
+proc isOnLastItem(s: ScopeIndexStack): bool =
+  # Used to delay output if we have a container construct, e.g.: section, case, type
+  if s[^1].scope.items.len == 0: 
+    return true
+  else:
+    s[^1].scope.items.len - 1 == s[^1].index
+
+
+proc tfVarSection(c: Context, s: var ScopeIndexStack): NimNode =
+  #decho &"tfVarSection {c.nk}"
+  if isOnLastItem(s):
+    result = newTree(c.nk)
+    for defc in c.children:
+      if defc.hasItem:
+        tfInner(defc, s, result)
+      else:
+        result.add defc.output
+
+
+proc tfCase(c: Context, s: var ScopeIndexStack): NimNode =
+  # case should only return the entire case statement on the last index, of last scope item index
+  if isOnLastItem(s):
+    result = newTree(nnkCaseStmt, c.children[0].output)
+    tfInner(c.children[1], s, result)
+    if c.children[^1].nk == nnkElse:
+      result.add c.children[^1].tf(s)
+
+
+proc tfTypeSection(c: Context, s: var ScopeIndexStack): NimNode =
+  #decho &"tfTypeSection {c.nk}"
+  if isOnLastItem(s):
+    result = newTree(c.nk)
+    for defc in c.children:
+      if defc.hasItem:
+        result.add tf(defc, s)
+      else:
+        result.add defc.output
+
+proc tfEnumTy(c: Context, s: var ScopeIndexStack): NimNode =
+  assert c.children.len == 2
+  result = newTree(nnkEnumTy, c.children[0].output)
+  var def = c.children[1]
+  for i in 0..<s[^1].scope.items.len:
+    s[^1].index = i
+    result.add tf(def, s)
+
+proc tfObjectTy(c: Context, s: var ScopeIndexStack): NimNode =
+  result = newTree(nnkObjectTy, c.children[0].output, c.children[1].output)
+  result.add tf(c.children[2], s)
+
+proc tfRecList(c: Context, s: var ScopeIndexStack): NimNode =
+  result = newTree(nnkRecList)
+  for i in 0..<s[^1].scope.items.len:
+    s[^1].index = i
+    for def in c.children:
+      result.add tf(def, s)
+
+proc tf(c: Context, s: var ScopeIndexStack): NimNode =
+  #decho &"tf {c.kind} {c.hasItem}"
+  if c.hasItem:
+    case c.kind:
+    of ckIt: tfIt(c, s)
+    of ckNamed: c.output
+    of ckGen: tfGen(c, s)
+    of ckOpTupleIndex, ckOpStringify, ckOpItIndex, ckOpCapitalize:
+      tfOp(c, s)
+    of ckVarSection: tfVarSection(c, s)
+    of ckCaseStmt: tfCase(c, s)
+    of ckTypeSection: tfTypeSection(c, s)
+    of ckEnumTy: tfEnumTy(c, s)
+    of ckObjectTy: tfObjectTy(c, s)
+    of ckRecList: tfRecList(c, s)
+    else:
+      var n = newNimNode(c.nk)
+      for child in c.children:
+        n.add child.tf(s)
+      n
+  else:
+    c.output
+#< AST Transformers
 
 macro gen*(args: varargs[untyped]): untyped =
-  ## Implements the DSL
-  expectMinLen args, 1
-  expectKind args[^1], nnkStmtList
+  var gNode = newNimNode(nnkCall)
+  gNode.add ident(MacroTransformerName)
+  for a in args:
+    gNode.add a
+  #decho "-- AST"
+  #decho gNode.treeRepr
 
-  # separate the named and unnamed arguments
-  var lhs, rhs, items: seq[NimNode]
-  var body = args[^1].copyNimTree
-
-  var itsName = "it"
-  for arg in args[0 ..< ^1]:
-    if arg.kind == nnkExprEqExpr:
-      if arg[0].repr == itsName: # change its name
-        itsName = arg[1].repr
-      else:
-        lhs.add arg[0]
-        rhs.add arg[1]
-    else:
-      items.add arg
+  var c:Context = parseGen(gNode, nil)
   
-  # process the body one statement at a time
-  result = nnkStmtList.newTree
+  #decho "-- transform"
+  var s:ScopeIndexStack
+  result = c.tfGen(s)
+  if printFlag:
+    echo gNode.repr,"\n"
+    echo "------------"
+    echo result.repr
 
-  for stmt in body:
-    var s = stmt
+#> == it over type fields
+proc isTypeDesc(n: NimNode): bool =
+  var t = n.getType
+  t.kind == nnkBracketExpr and t[0].kind == nnkSym and t[0].strVal == "typeDesc"
 
-    # named args
-    for i in 0 ..< lhs.len:
-      var l = ident(lhs[i].repr)
-      s = s.replace(nnkPrefix.newTree(ident(stringifyOp), l), newLit(rhs[i].repr))
-      var capr = rhs[i].repr
-      capr[0] = capr[0].toUpperAscii()
-      s = s.replace(nnkPrefix.newTree(ident(capOp), l), newLit(capr))
-      s = s.replace(l, rhs[i])
-    
-    # unnamed args
-    if items.len > 0:
-      recurseIt(result, s, ident(itsName), items)
+
+proc fieldsEnum(src, ty, dst: NimNode) =
+  # EnumTy
+  for n in ty:
+    case n.kind
+    of nnkSym:
+      dst.add n
+    of nnkEnumFieldDef:
+      dst.add nnkTupleConstr.newTree(n[0], n[1])
+    of nnkEmpty: discard
     else:
-      result.add s
+      error(&"Unsupported {n.kind}", src)
 
-  #echo result.astGenRepr
+proc fieldsObject(src, ty, dst: NimNode) =
+  # ObjectTy
+  # Checks field accessibility.
+  let isSameModule = src.lineInfoObj.filename == ty.lineInfoObj.filename
+
+  var recList = ty[2]
+  for def in recList:
+    case def.kind:
+    of nnkIdentDefs:
+      for id in def[0 ..< ^2]:
+        case id.kind:
+        of nnkIdent, nnkSym:
+          if isSameModule:
+            dst.add id
+        of nnkPostFix:
+          dst.add id[1]
+        else:
+          error(&"Unexpected {id.kind = }", src)
+    of nnkEmpty: discard
+    else:
+      error(&"Unexpected {def.kind = }", src)
+
 
 macro genWith*(arg: typed, body: untyped): untyped =
-  ## Unwraps the enum fields in ``arg`` and passes the values to ``gen``.
-  ## TODO?: handle object/instance fields
-
-  #echo arg.astGenRepr
   expectKind arg, nnkSym
-  let impl = getImpl(arg)
-  expectMinLen impl, 3
-  let e = impl[2]
-  expectKind e, nnkEnumTy
+  assert isTypeDesc(arg)
 
-  result = nnkCall.newTree(ident("gen"))
-  for f in e:
-    if f.kind == nnkEmpty: continue
+  result = nnkCall.newTree(ident(MacroTransformerName))
 
-    if f.kind == nnkEnumFieldDef:
-      result.add nnkTupleConstr.newTree(ident(f[0].repr), f[1])
-    else:
-      result.add f
+  var impl = arg.getImpl
+  case impl.kind:
+  of nnkTypeDef:
+    var ty = impl[2]
+    case ty.kind:
+    of nnkEnumTy: fieldsEnum(arg, ty, result)
+    of nnkObjectTy: fieldsObject(arg, ty, result)
+    else: error(&"Unexpected {ty.kind}", arg)
+  else:
+    error(&"Unexpected \"{impl.kind}\".", arg)
 
   result.add body
-
-  #echo result.astGenRepr
+#< == it over type fields
