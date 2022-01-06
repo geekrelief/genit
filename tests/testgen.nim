@@ -293,7 +293,6 @@ test "set const via it expression":
   
   check redVal == 1
 
-
 test "with enum":
   template mypragma() {.pragma.}
 
@@ -321,8 +320,8 @@ test "with enum values":
   check Nred == ("nred", (1, "red"))
   check Ngreen == ("ngreen", "green")
 
-
 import etype
+
 test "with object":
   type Color = object
     r, g, b: uint8
@@ -343,3 +342,66 @@ test "with object":
   check fc.getR == 0f
   check fc.getG == 1f
   check fc.getB == 0f
+
+test "with object, other args":
+  type Color = object
+    r, g, b: uint8
+  
+  var c: Color
+
+  genWith(Color, it = this):
+    c.this = 255'u8
+  
+  check c.r == 255'u8
+  check c.g == 255'u8
+  check c.b == 255'u8
+
+test "fields operator in args":
+  type Color = object
+    r, g, b: uint8
+  
+  var c: Color
+
+  gen(it = this, +Color):
+    c.this = 255'u8
+  
+  check c.r == 255'u8
+  check c.g == 255'u8
+  check c.b == 255'u8
+
+  gen(+Color, it = this):
+    c.this = 128'u8
+  
+  check c.r == 128'u8
+  check c.g == 128'u8
+  check c.b == 128'u8
+
+test "type fields assigned to named arg":
+  type Color = object
+    r, g, b: uint8
+  
+  var c: Color
+
+  gen(co = +Color):
+    gen(it = this, ~co):
+      c.this = 255'u8
+  
+  check c.r == 255'u8
+  check c.g == 255'u8
+  check c.b == 255'u8
+
+#[
+test "fields type used in nested call":
+  type Color = object
+    r, g, b: uint8
+  
+  var red, green, blue: Color
+
+  gen(red, green, blue):
+    gen(it = this, +Color):
+      it.this = 255'u8
+  
+  check c.r == 255'u8
+  check c.g == 255'u8
+  check c.b == 255'u8
+  ]#

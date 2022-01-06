@@ -91,7 +91,7 @@ runnableExamples:
 ##
 ## Expansion
 ## ---------
-## The ``~`` operator will expand an array, seq, or tuple.
+## The ``~`` operator will expand an array, seq, or tuple, when in the body.
 runnableExamples:
   type Color = enum
     none = 0 
@@ -113,6 +113,38 @@ runnableExamples:
 
   doAssert varVal == 3
   doAssert letVal == blue
+##
+## Type Fields
+## -----------
+## Passing in a type prefixed with the fields operator, ``+``, will pass in the 
+## type's fields as unnamed items. Internally this uses ``genWith``, and
+## only supports Enum and Object types.
+runnableExamples:
+  type ColorIndex = enum
+    none = -1
+    red = 1
+    green = 2
+    blue = 3
+
+  gen +ColorIndex:
+    var `^it[0]` = ($$it[0], it[1])
+  
+  doAssert None == ("none", -1)
+  doAssert Red == ("red", 1)
+  doAssert Green == ("green", 2)
+  doAssert Blue == ("blue", 3)
+
+  type Color = object
+    r, g, b: uint8
+  
+  var c: Color
+
+  gen +Color:
+    c.it = 255'u8
+  
+  doAssert c.r == 255'u8
+  doAssert c.g == 255'u8
+  doAssert c.b == 255'u8
 ##
 ## Multiple Statements and Nesting
 ## -------------------------------
@@ -169,36 +201,6 @@ runnableExamples:
 
   doAssert color.redComponent == 1
 ##
-## ``genWith`` Enum or Object
-## --------------------------
-## Iteration over enum and object fields can be done with ``genWith``.
-runnableExamples:
-  type ColorIndex = enum
-    none = -1
-    red = 1
-    green = 2
-    blue = 3
-
-  genWith ColorIndex:
-    var `^it[0]` = ($$it[0], it[1])
-  
-  doAssert None == ("none", -1)
-  doAssert Red == ("red", 1)
-  doAssert Green == ("green", 2)
-  doAssert Blue == ("blue", 3)
-
-  type Color = object
-    r, g, b: uint8
-  
-  var c: Color
-
-  genWith Color:
-    c.it = 255'u8
-  
-  doAssert c.r == 255'u8
-  doAssert c.g == 255'u8
-  doAssert c.b == 255'u8
-##
 ## Debugging with ``print``
 ## ------------------------
 ## To see what ``gen`` produces, wrap it with the ``print`` macro.
@@ -228,11 +230,13 @@ import std / [ macros, tables, strformat, genasts, strutils ]
 from sequtils import anyIt
 
 const MacroTransformerName = "gen"
+const MacroTransformerWithName = "genWith"
 const ItsName = "it"
 const StringifyPrefix = "$$"
 const ItIndexPrefix = "%"
 const CapitalizePrefix = "^"
 const ExpandPrefix = "~"
+const FieldsPrefix = "+"
 const Operators = [ StringifyPrefix, ItIndexPrefix, CapitalizePrefix ]
 const AccQuotedOperators = [ ItIndexPrefix, CapitalizePrefix ] # operators that work in accQuoted
 
@@ -370,14 +374,18 @@ proc parseGen(n:NimNode, parentScope: Scope): Context =
       # handle expansion
       var prefix = arg[0].strVal
       var group = arg[1].strVal
-      if prefix == ExpandPrefix and parentScope.named.hasKey(group):
-        var items = parentScope.named[group]
-        
-        if items.kind == nnkPrefix and items[0].eqIdent("@"):
-          items = items[1]
-        assert items.kind == nnkBracket or items.kind == nnkTupleConstr, &"\nUnexpeted:\n{items.treeRepr}"
-        for item in items:
-          scope.items.add item
+      if prefix == ExpandPrefix:
+        if parentScope == nil: error("Unexpected expand operator in arguments with no parent `gen` call for context.", n)
+
+        if parentScope.named.hasKey(group):
+          var items = parentScope.named[group]
+          
+          if items.kind == nnkPrefix and items[0].eqIdent("@"):
+            items = items[1]
+          if not(items.kind == nnkBracket or items.kind == nnkTupleConstr):
+            error(&"Unexpected: {items.kind} for expansion, must be array, seq, or tuple", n)
+          for item in items:
+            scope.items.add item
     else:
       scope.items.add arg
 
@@ -732,8 +740,39 @@ proc tf(c: Context, s: var ScopeIndexStack): NimNode =
     c.output
 #< AST Transformers
 
+
 macro gen*(args: varargs[untyped]): untyped =
   ## Implements the DSL.
+
+  # Check for fields operator on arguments.
+  var fieldsIndex = -1
+  var fieldsTy: NimNode
+  var fieldsNamedArg: NimNode
+  for i, a in args:
+    if a.kind == nnkPrefix and a[0].strVal == FieldsPrefix:
+      fieldsIndex = i
+      fieldsTy = a[1]
+      break
+    elif a.kind == nnkExprEqExpr:
+      var lhs = a[0]
+      var rhs = a[1]
+      if rhs.kind == nnkPrefix and rhs[0].strVal == FieldsPrefix:
+        fieldsIndex = i
+        fieldsTy = rhs[1]
+        fieldsNamedArg = newTree(nnkExprEqExpr, lhs, fieldsTy)
+        break
+
+  if fieldsIndex > -1:
+    args.del(fieldsIndex)
+
+    result = nnkCall.newTree(
+      ident(MacroTransformerWithName),
+      fieldsTy)
+    if fieldsNamedArg != nil: result.add fieldsNamedArg
+    for a in args:
+      result.add a
+    return result
+
   var gNode = newNimNode(nnkCall)
   gNode.add ident(MacroTransformerName)
   for a in args:
@@ -747,9 +786,10 @@ macro gen*(args: varargs[untyped]): untyped =
   var s:ScopeIndexStack
   result = c.tfGen(s)
   if printFlag:
-    echo gNode.repr,"\n"
-    echo "------------"
+    echo gNode.repr
+    echo ">>>"
     echo result.repr
+    echo "-----"
 
 #> == it over type fields
 proc isTypeDesc(n: NimNode): bool =
@@ -757,19 +797,19 @@ proc isTypeDesc(n: NimNode): bool =
   t.kind == nnkBracketExpr and t[0].kind == nnkSym and t[0].strVal == "typeDesc"
 
 
-proc fieldsEnum(src, ty, dst: NimNode) =
+proc fieldsEnum(src, ty: NimNode): seq[NimNode] =
   # EnumTy
   for n in ty:
     case n.kind
     of nnkSym:
-      dst.add n
+      result.add n
     of nnkEnumFieldDef:
-      dst.add nnkTupleConstr.newTree(n[0], n[1])
+      result.add nnkTupleConstr.newTree(n[0], n[1])
     of nnkEmpty: discard
     else:
       error(&"Unsupported {n.kind}", src)
 
-proc fieldsObject(src, ty, dst: NimNode) =
+proc fieldsObject(src, ty: NimNode): seq[NimNode] =
   # ObjectTy
   # Checks field accessibility.
   let isSameModule = src.lineInfoObj.filename == ty.lineInfoObj.filename
@@ -782,33 +822,63 @@ proc fieldsObject(src, ty, dst: NimNode) =
         case id.kind:
         of nnkIdent, nnkSym:
           if isSameModule:
-            dst.add id
+            result.add id
         of nnkPostFix:
-          dst.add id[1]
+          result.add id[1]
         else:
           error(&"Unexpected {id.kind = }", src)
     of nnkEmpty: discard
     else:
       error(&"Unexpected {def.kind = }", src)
 
-
-macro genWith*(arg: typed, body: untyped): untyped =
+macro genWith*(tySym: typed, args:varargs[untyped]): untyped =
   ## Calls ``gen`` with the fields of the enum or object type passed.
-  expectKind arg, nnkSym
-  assert isTypeDesc(arg)
+  ## Used by the fields operator, ``+``, with ``gen`` on a type.
+  assert isTypeDesc(tySym)
+
+  let body = args[^1]
 
   result = nnkCall.newTree(ident(MacroTransformerName))
 
-  var impl = arg.getImpl
+  var fields: seq[NimNode]
+  var impl = tySym.getImpl
   case impl.kind:
   of nnkTypeDef:
     var ty = impl[2]
-    case ty.kind:
-    of nnkEnumTy: fieldsEnum(arg, ty, result)
-    of nnkObjectTy: fieldsObject(arg, ty, result)
-    else: error(&"Unexpected {ty.kind}", arg)
+    fields = case ty.kind:
+    of nnkEnumTy: fieldsEnum(tySym, ty)
+    of nnkObjectTy: fieldsObject(tySym, ty)
+    else:
+      error(&"Unexpected {ty.kind}", tySym)
+      @[]
   else:
-    error(&"Unexpected \"{impl.kind}\".", arg)
+    error(&"Unexpected \"{impl.kind}\".", tySym)
+  
+  var tyArgName:NimNode
+  if args.len > 1:
+    for a in args[0 ..< ^1]:
+      if a.kind == nnkExprEqExpr:
+        var lhs = a[0]
+        var rhs = a[1]
+        if rhs.kind == nnkIdent and rhs.eqIdent(tySym):
+          tyArgName = lhs
+        else:
+          result.add a
+      else:
+        result.add a
+
+  if tyArgName != nil:
+    var fieldsNode = newNimNode(nnkBracket)
+    fieldsNode.add fields
+    var namedArg = newTree(nnkExprEqExpr, tyArgName, fieldsNode)
+    result.add namedArg
+  else:
+    result.add fields
 
   result.add body
+  if printFlag:
+    echo "genWith(", tySym.strVal, ",", args.repr, ")"
+    echo ">>>"
+    echo result.repr
+    echo "-----"
 #< == it over type fields
