@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.6.0
+## :Version: 0.7.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
