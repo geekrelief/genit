@@ -122,7 +122,6 @@ test "two operators":
   check Second == "2"
   check Third == "3"
 
-#[
 test "stringify and index":
   gen red, green, blue:
     var it = ($$it, %it)
@@ -131,6 +130,7 @@ test "stringify and index":
   check green == ("green", 1)
   check blue == ("blue", 2)
 
+#[
 test "stringify named":
   gen(l = Label, name, age):
     var `it l` = $$it & $$l
