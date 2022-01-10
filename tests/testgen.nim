@@ -1,4 +1,4 @@
-import unittest
+import std / [unittest, strformat]
 
 import genit
 
@@ -34,12 +34,14 @@ test "basic items":
 
 test "nested, shadowed":
   var sum = 0
+
   gen 1, 2:
     gen(3, 5): # inner it shadows outer it, so we get 3+3, 5+5 twice
       sum += it + it
   
   check sum == 32
 
+#[
 test "nested, renamed":
   var sum = 0
 
@@ -405,3 +407,32 @@ test "fields type used in nested call":
   check c.g == 255'u8
   check c.b == 255'u8
   ]#
+
+#[
+  gen(it = machine, a, b, c):
+    let res = gen(it = s, +States):
+      case machine.curState:
+        of s:
+          callSomeFunc($$comp)
+    
+    variable.nextState(res)
+
+  of "min":
+    case kind
+    of "number", "range":
+      value.parseSomeNumber(min):
+        return minNumericValidator(min)
+  of "max":
+    case kind
+    of "number", "range":
+      value.parseSomeNumber(max):
+        return maxNumericValidator(max)
+
+gen min, max:
+  case val:
+  of $$it:
+    case kind:
+    of "number", "range":
+      return value.parseSomeNumber(it).`it NumericValidator`(it)
+]#
+]#
