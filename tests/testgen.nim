@@ -122,6 +122,7 @@ test "two operators":
   check Second == "2"
   check Third == "3"
 
+
 test "stringify and index":
   gen red, green, blue:
     var it = ($$it, %it)
@@ -136,7 +137,6 @@ test "stringify named":
     var `it l` = $$it & $$l
   check nameLabel == "nameLabel"
   check ageLabel == "ageLabel"
-
 
 test "capitalize":
   gen red, green, blue:

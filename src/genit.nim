@@ -625,7 +625,7 @@ proc tfOp(c: Context): NimNode =
     assert first.kind == ckIt
     for itemScope in scope.itScopes:
       if itemScope.itsName.eqIdent(first.itsName):
-        result = itemScope.itIndex
+        result = itemScope.itIndex.copyNimNode
         break
   of ckOpCapitalize:
     var n = first.tf()
