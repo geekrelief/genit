@@ -375,7 +375,7 @@ proc parseGen(n:NimNode): Context =
   result = Context(kind: ckGen, nk: nnkStmtList, callsite: n, hasItem: true)
 
 proc parseIdentKind(n: NimNode): Context =
-  decho "identKind"
+  #decho "identKind"
   for itemScope in scope.itScopes:
     if n.eqIdent(itemScope.itsName):
       #decho &"--ckIt nnkIdent {n.repr}"
@@ -549,7 +549,7 @@ proc parseSection(n: NimNode): Context =
 
 
 proc parseNode(n: NimNode): Context =
-  decho &"enter parseNode {n.kind} {n.repr}"
+  #decho &"enter parseNode {n.kind} {n.repr}"
   result = case n.kind:
     of LitKinds: parseLitKind(n)
     of nnkCall, nnkCommand:
@@ -569,7 +569,7 @@ proc parseNode(n: NimNode): Context =
     of nnkRecList: parseMulti(n, ckRecList)
     else: parseMulti(n)
 
-  decho &"exit parseNode {result.kind} {result.nk} {result.hasItem}"
+  #decho &"exit parseNode {result.kind} {result.nk} {result.hasItem}"
 
 
 #< Parsing functions
@@ -593,12 +593,12 @@ proc tfInner(c: Context): seq[NimNode] =
       var o = tf(c)
       if o != nil:
         result.add o
-        decho &"tfInner {itemScope.repr = }\n--- {result.repr = }"
+        #decho &"tfInner {itemScope.repr = }\n--- {result.repr = }"
   else:
     var o = tf(c)
     if o != nil:
       result.add o
-      decho &"tfInner {result.repr = }"
+      #decho &"tfInner {result.repr = }"
 
 
 proc tfGen(c: Context): NimNode =
@@ -644,7 +644,7 @@ proc isOnLastItem(): bool =
 
 
 proc tfVarSection(c: Context): NimNode =
-  decho &"tfVarSection {c.nk} {isOnLastItem() = }"
+  #decho &"tfVarSection {c.nk} {isOnLastItem() = }"
   if isOnLastItem():
     result = newTree(c.nk)
     for defc in c.children:
@@ -695,7 +695,7 @@ proc tfRecList(c: Context): NimNode =
       result.add tf(def)
 
 proc tf(c: Context): NimNode =
-  decho &"tf {c.kind} {c.hasItem}"
+  #decho &"tf {c.kind} {c.hasItem}"
   if c.hasItem:
     case c.kind:
     of ckIt: tfIt(c)
@@ -796,10 +796,10 @@ macro gen*(va: varargs[untyped]): untyped =
       itemScope.items.add arg
 
   if scope.itemStack.isNil:
-    decho "new itemStack"
+    #decho "new itemStack"
     scope.itemStack = newNimNode(nnkBracket)
   scope.itemStack.add itemScope
-  decho "gen itemStack " & scope.itemStack.repr
+  #decho "gen itemStack " & scope.itemStack.repr
 
   
   for s in body:

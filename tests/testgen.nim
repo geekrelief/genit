@@ -139,7 +139,6 @@ test "stringify named":
   check nameLabel == "nameLabel"
   check ageLabel == "ageLabel"
 
-#[
 test "capitalize":
   gen red, green, blue:
     var `^it` = $$it
@@ -393,7 +392,6 @@ test "type fields assigned to named arg":
   check c.g == 255'u8
   check c.b == 255'u8
 
-#[
 test "fields type used in nested call":
   type Color = object
     r, g, b: uint8
@@ -404,10 +402,9 @@ test "fields type used in nested call":
     gen(it = this, +Color):
       it.this = 255'u8
   
-  check c.r == 255'u8
-  check c.g == 255'u8
-  check c.b == 255'u8
-  ]#
+  check red.r == 255'u8
+  check green.g == 255'u8
+  check blue.b == 255'u8
 
 #[
   gen(it = machine, a, b, c):
@@ -435,5 +432,4 @@ gen min, max:
     case kind:
     of "number", "range":
       return value.parseSomeNumber(it).`it NumericValidator`(it)
-]#
 ]#
