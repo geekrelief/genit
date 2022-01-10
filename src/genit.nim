@@ -549,7 +549,7 @@ proc parseSection(n: NimNode): Context =
 
 
 proc parseNode(n: NimNode): Context =
-  decho &"enter parseNode {n.kind}"
+  decho &"enter parseNode {n.kind} {n.repr}"
   result = case n.kind:
     of LitKinds: parseLitKind(n)
     of nnkCall, nnkCommand:
@@ -586,7 +586,6 @@ proc tfIt(c: Context): NimNode =
 
 
 proc tfInner(c: Context): seq[NimNode] =
-
   var itemScope = scope.itemStack[^1]
   if itemScope.items.len > 0:
     for i in 0 ..< itemScope.items.len:
@@ -594,10 +593,12 @@ proc tfInner(c: Context): seq[NimNode] =
       var o = tf(c)
       if o != nil:
         result.add o
+        decho &"tfInner {itemScope.repr = }\n--- {result.repr = }"
   else:
     var o = tf(c)
     if o != nil:
       result.add o
+      decho &"tfInner {result.repr = }"
 
 
 proc tfGen(c: Context): NimNode =
@@ -636,14 +637,14 @@ proc tfOp(c: Context): NimNode =
 
 proc isOnLastItem(): bool =
   # Used to delay output if we have a container construct, e.g.: section, case, type
-  if scope.itemStack[^1].len == 0: 
+  if scope.itemStack[^1].items.len == 0: 
     return true
   else:
-    scope.itemStack[^1].len - 1 == scope.itemStack[^1].index
+    scope.itemStack[^1].items.len - 1 == scope.itemStack[^1].index
 
 
 proc tfVarSection(c: Context): NimNode =
-  #decho &"tfVarSection {c.nk}"
+  decho &"tfVarSection {c.nk} {isOnLastItem() = }"
   if isOnLastItem():
     result = newTree(c.nk)
     for defc in c.children:
@@ -769,14 +770,12 @@ macro gen*(va: varargs[untyped]): untyped =
     if arg.kind == nnkExprEqExpr:
       var lhs = arg[0]
       var rhs = arg[1]
-      decho "here"
       if lhs.kind == nnkIdent:
         if lhs.eqIdent(ItsName): # change its name
           itemScope[0] = rhs
         elif lhs.eqIdent(ItemStackName):
           scope.itemStack = rhs
         else:
-          decho &"got {lhs.repr} = {rhs.repr}"
           scope.named[lhs.strVal] = rhs # todo: check if this a nim fragment
     elif arg.kind == nnkPrefix:
       # handle expansion

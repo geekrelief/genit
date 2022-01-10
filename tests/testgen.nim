@@ -131,13 +131,15 @@ test "stringify and index":
   check green == ("green", 1)
   check blue == ("blue", 2)
 
-#[
+
 test "stringify named":
   gen(l = Label, name, age):
     var `it l` = $$it & $$l
+
   check nameLabel == "nameLabel"
   check ageLabel == "ageLabel"
 
+#[
 test "capitalize":
   gen red, green, blue:
     var `^it` = $$it
