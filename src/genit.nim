@@ -725,7 +725,7 @@ macro gen*(va: varargs[untyped]): untyped =
   var body = va[^1]
 
   var args:seq[NimNode]
-  if va.len > 2: 
+  if va.len > 1: 
     args = va[0..^2]
 
   # Check for fields operator on arguments.
@@ -765,17 +765,18 @@ macro gen*(va: varargs[untyped]): untyped =
   scope = Scope(itsName: ident(ItsName))
 
   # process args
-  decho &"{args.repr = }"
   for arg in args:
     if arg.kind == nnkExprEqExpr:
       var lhs = arg[0]
       var rhs = arg[1]
+      decho "here"
       if lhs.kind == nnkIdent:
         if lhs.eqIdent(ItsName): # change its name
           itemScope[0] = rhs
         elif lhs.eqIdent(ItemStackName):
           scope.itemStack = rhs
         else:
+          decho &"got {lhs.repr} = {rhs.repr}"
           scope.named[lhs.strVal] = rhs # todo: check if this a nim fragment
     elif arg.kind == nnkPrefix:
       # handle expansion

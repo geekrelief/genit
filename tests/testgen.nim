@@ -41,7 +41,6 @@ test "nested, shadowed":
   
   check sum == 32
 
-#[
 test "nested, renamed":
   var sum = 0
 
@@ -123,6 +122,7 @@ test "two operators":
   check Second == "2"
   check Third == "3"
 
+#[
 test "stringify and index":
   gen red, green, blue:
     var it = ($$it, %it)
@@ -130,7 +130,6 @@ test "stringify and index":
   check red == ("red", 0)
   check green == ("green", 1)
   check blue == ("blue", 2)
-
 
 test "stringify named":
   gen(l = Label, name, age):
