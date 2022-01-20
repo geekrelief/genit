@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.8.1
+## :Version: 0.9.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -14,7 +14,7 @@
 ##
 ## Named Arguments
 ## ---------------
-## Named arguments are substituted into the body.
+## Named arguments are local to the gen call and substituted into the body.
 runnableExamples:
   gen(r = Radial, c = Component): # produces: 
     var `r c`: float              # var RadialComponent: float
@@ -31,6 +31,32 @@ runnableExamples:
   doAssert typeof(redVal) is int
   doAssert typeof(greenVal) is int
   doAssert typeof(blueVal) is int
+##
+## Global Named Arguments
+## ----------------------
+## Global named arguments can be assigned with the ``:=`` operator.
+runnableExamples:
+  #[ 
+  # runnableExamples doesn't like `:=`, but the following works
+  gen(c := Component) 
+
+  gen a:
+    var `it c`: int = 1
+  
+  gen b:
+    var `c it`: int = 2
+  
+  doAssert aComponent == 1
+  doAssert ComponentB == 2
+
+  gen(c := Comp)
+
+  gen d:
+    var `it c`:int = 3
+  
+  doAssert dComp == 3
+  ]#
+  discard
 ##
 ## Index
 ## -----
@@ -292,8 +318,11 @@ const ItIndexPrefix = "%"
 const CapitalizePrefix = "^"
 const ExpandPrefix = "~"
 const FieldsPrefix = "+"
+const GlobalInfix = ":="
 const Operators = [ StringifyPrefix, ItIndexPrefix, CapitalizePrefix ]
 const AccQuotedOperators = [ ItIndexPrefix, CapitalizePrefix ] # operators that work in accQuoted
+
+var globalNamed {.compileTime.}: Table[string, NimNode]
 
 const EmptyKinds = { nnkNone, nnkEmpty, nnkNilLit }
 const IntKinds = { nnkCharLit..nnkUint64Lit }
@@ -320,7 +349,7 @@ type ContextKind = enum
     ckEnumTy
     ckObjectTy
     ckRecList
-  
+
 type Scope = object
     itsName: NimNode
     named: Table[string, NimNode]
@@ -405,6 +434,11 @@ proc parseIdentKind(n: NimNode): Context =
   for lhs, rhs in scope.named:
     if n.eqIdent(lhs):
       #decho &"--ckNamed nnkIdent ({lhs} => {rhs.repr})"
+      return Context(nk: nnkIdent, kind: ckNamed, output: rhs)
+
+  for lhs, rhs in globalNamed:
+    if n.eqIdent(lhs):
+      #decho &"--ckNamed nnkIdent global ({lhs} => {rhs.repr})"
       return Context(nk: nnkIdent, kind: ckNamed, output: rhs)
 
   #decho &"--ckNode {n.repr}"
@@ -746,13 +780,11 @@ proc tf(c: Context): NimNode =
 
 macro gen*(va: varargs[untyped]): untyped =
   ## Implements the DSL.
-  var body = va[^1]
+  var body = if va[^1].kind == nnkStmtList: va[^1] else: nil
 
-  var args:seq[NimNode]
-  if va.len > 1: 
-    args = va[0..^2]
+  var args:seq[NimNode] = if body.isNil: va[0..^1] else: va[0..^2]
 
-  # Check for operator on arguments.
+  # Check for field operator on arguments.
   var fieldsIndex = -1
   var fieldsTy: NimNode
   var fieldsNamedArg: NimNode
@@ -779,7 +811,8 @@ macro gen*(va: varargs[untyped]): untyped =
     if fieldsNamedArg != nil: result.add fieldsNamedArg
     for a in args:
       result.add a
-    result.add body
+    if not body.isNil:
+      result.add body
     return result
 
 
@@ -815,6 +848,11 @@ macro gen*(va: varargs[untyped]): untyped =
             error(&"Unexpected: {xItems.kind} for expansion, must be array, seq, or tuple", arg)
           for item in xItems:
             itemScope.items.add item
+    elif arg.kind == nnkInfix and arg[0].eqIdent(GlobalInfix):
+      var lhs = arg[1]
+      var rhs = arg[2]
+      expectKind lhs, nnkIdent
+      globalNamed[lhs.strVal] = rhs
     else:
       itemScope.items.add arg
 
@@ -824,7 +862,9 @@ macro gen*(va: varargs[untyped]): untyped =
   scope.itemStack.add itemScope
   #decho "gen itemStack " & scope.itemStack.repr
 
-  
+  if body.isNil:
+    return
+
   for s in body:
     c.children.add parseNode(s)
 

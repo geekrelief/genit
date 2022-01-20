@@ -425,30 +425,27 @@ test "fields type used in nested call":
   check green.g == 255'u8
   check blue.b == 255'u8
 
-#[
-  gen(it = machine, a, b, c):
-    let res = gen(it = s, +States):
-      case machine.curState:
-        of s:
-          callSomeFunc($$comp)
-    
-    variable.nextState(res)
+test "global names":
+  gen(c = Component)
 
-  of "min":
-    case kind
-    of "number", "range":
-      value.parseSomeNumber(min):
-        return minNumericValidator(min)
-  of "max":
-    case kind
-    of "number", "range":
-      value.parseSomeNumber(max):
-        return maxNumericValidator(max)
+  gen foo:
+    var `it c`: int = 0
+  
+  check fooC == 0
 
-gen min, max:
-  case val:
-  of $$it:
-    case kind:
-    of "number", "range":
-      return value.parseSomeNumber(it).`it NumericValidator`(it)
-]#
+  gen(c := Component)
+
+  gen a:
+    var `it c`:int = 1
+  gen b:
+    var `c it`:int = 2
+
+  check aComponent == 1
+  check ComponentB == 2
+
+  gen(c := Comp)
+
+  gen d:
+    var `it c`:int = 3
+
+  check dComp == 3
