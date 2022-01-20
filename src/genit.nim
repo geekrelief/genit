@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.7.0
+## :Version: 0.8.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -58,6 +58,8 @@ runnableExamples:
 ## ---------------
 ## Each unnamed argument can be a tuple, and its parts can be accessed by indexing like a regular tuple.
 ## If the indexed tuple is an l-value, it must be surrounded by accent quotes to be legal Nim.
+##
+## If an unnnamed argument is indexed, it will be "duplicated", so you can mix tuple and non-tuple arguments.
 runnableExamples:
   gen (first, 1), (second, 2), (third, 3): # produces:
     var `it[0]` = it[1]                    # var first = 1
@@ -66,6 +68,11 @@ runnableExamples:
   doAssert first == 1
   doAssert second == 2
   doAssert third == 3
+
+  gen w, a, s, d, (shift, run):
+    let `^it[0]` = $$it[1]
+  doAssert W == "w"
+  doAssert Shift == "run"
 ##
 ## Stringify
 ## ---------
@@ -617,8 +624,10 @@ proc tfOp(c: Context): NimNode =
   case c.kind:
   of ckOpTupleIndex:
     var n = first.tf()
-    assert n.kind == nnkTupleConstr
-    result = n[c.tupleIndex]
+    if n.kind == nnkTupleConstr:
+      result = n[c.tupleIndex]
+    else:
+      result = n # "duplicate" n along as if it were part of a tuple
   of ckOpStringify:
     var n = first.tf()
     result = newLit(n.repr)
@@ -729,7 +738,7 @@ macro gen*(va: varargs[untyped]): untyped =
   if va.len > 1: 
     args = va[0..^2]
 
-  # Check for fields operator on arguments.
+  # Check for operator on arguments.
   var fieldsIndex = -1
   var fieldsTy: NimNode
   var fieldsNamedArg: NimNode

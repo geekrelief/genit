@@ -114,6 +114,12 @@ test "tuples":
   check greenState1.bComponent == 255
   check blueState1.cComponent == 255
 
+test "tuple index on non tuple item":
+  gen w, a, s, d, (leftshift, run):
+    let `^it[0]` = $$it[1]
+  check W == "w"
+  check LeftShift == "run"
+
 test "two operators":
   gen (first, 1), (second, 2), (third, 3):
     var `^it[0]` = $$it[1] 
