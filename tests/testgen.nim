@@ -120,6 +120,19 @@ test "tuple index on non tuple item":
   check W == "w"
   check LeftShift == "run"
 
+test "tuple index in object":
+  type State = object
+    foo: int
+    bar: int
+  
+  var s = State(foo: 10, bar: 100)
+
+  gen (val, foo), bar:
+    let `it[0]` = s.`it[1]`
+  
+  check val == 10
+  check bar == 100
+
 test "two operators":
   gen (first, 1), (second, 2), (third, 3):
     var `^it[0]` = $$it[1] 

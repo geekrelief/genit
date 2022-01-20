@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.8.0
+## :Version: 0.8.1
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -60,6 +60,8 @@ runnableExamples:
 ## If the indexed tuple is an l-value, it must be surrounded by accent quotes to be legal Nim.
 ##
 ## If an unnnamed argument is indexed, it will be "duplicated", so you can mix tuple and non-tuple arguments.
+##
+## If the tuple index is part of a larger expression, e.g. dot expression, accent quoting will run genit's parser on it.
 runnableExamples:
   gen (first, 1), (second, 2), (third, 3): # produces:
     var `it[0]` = it[1]                    # var first = 1
@@ -73,6 +75,18 @@ runnableExamples:
     let `^it[0]` = $$it[1]
   doAssert W == "w"
   doAssert Shift == "run"
+
+  type State = object
+    foo: int
+    bar: int
+  
+  var s = State(foo: 10, bar: 100)
+
+  gen (val, foo), bar:
+    let `it[0]` = s.`it[1]` # accent quote it[1] to bypass nim parsing
+  
+  doAssert val == 10
+  doAssert bar == 100
 ##
 ## Stringify
 ## ---------
