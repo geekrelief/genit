@@ -397,6 +397,47 @@ test "fields operator in args":
   check c.g == 128'u8
   check c.b == 128'u8
 
+test "fields operator with tuple":
+  type
+    Vec3 = tuple[x, y: float32, z: float32]
+    BinaryOp = proc(lhs, rhs: float32): float32
+
+  proc sum(x, y: float32): float32 = x + y
+
+  proc zipAndOp(lhs, rhs: Vec3, op: BinaryOp): Vec3 =
+    gen +Vec3:
+      result.it = op(lhs.it, rhs.it)
+
+  var l = (10f, 20f, 30f)
+  var r = (100f, 200f, 300f)
+
+  var res = zipAndOp(l, r, sum)
+  check res.x == 110f
+  check res.z == 330f
+
+test "fields operator with symbol":
+  type
+    Vec3 = tuple[x, y: float32, z: float32]
+  var l = (10f, 20f, 30f) 
+  var r:Vec3 = (0f, 0f, 0f)
+
+  gen +l: # tuple constructor
+    r[it] = l[it]
+
+  check r.x == 10f
+  check r.z == 30f
+
+  r.x = 1f
+  r.z = 3f
+
+  var res:Vec3
+  gen +r: # Vec3
+    res.it = r.it
+
+  check res.x == 1f
+  check res.z == 3f
+
+
 test "type fields assigned to named arg":
   type Color = object
     r, g, b: uint8

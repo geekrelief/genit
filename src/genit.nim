@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.9.0
+## :Version: 0.10.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -163,9 +163,9 @@ runnableExamples:
 ##
 ## Type Fields
 ## -----------
-## Passing in a type prefixed with the fields operator, ``+``, will pass in the 
-## type's fields as unnamed items. Internally this uses ``genWith``, and
-## only supports Enum and Object types.
+## Passing in a type or symbol prefixed with the fields operator, ``+``, will pass in the 
+## type's fields as unnamed items. Internally this uses ``genWith`` and
+## only supports Enum, Object, and Tuple types.
 runnableExamples:
   type ColorIndex = enum
     none = -1
@@ -192,6 +192,27 @@ runnableExamples:
   doAssert c.r == 255'u8
   doAssert c.g == 255'u8
   doAssert c.b == 255'u8
+
+  type
+    Vec3 = tuple[x, y: float32, z: float32]
+  var l = (10f, 20f, 30f) # tuple with no named fields
+  var r:Vec3 = (0f, 0f, 0f)
+
+  gen +l: # tuple constructor returns 0, 1, 2
+    r[it] = l[it]
+
+  doAssert r.x == 10f
+  doAssert r.z == 30f
+
+  r.x = 1f
+  r.z = 3f
+
+  var res:Vec3
+  gen +r: # Vec3
+    res.it = r.it
+
+  doAssert res.x == 1f
+  doAssert res.z == 3f
 ##
 ## Multiple Statements and Nesting
 ## -------------------------------
@@ -923,28 +944,35 @@ proc fieldsObject(src, ty: NimNode): seq[NimNode] =
     else:
       error(&"Unexpected {def.kind = }", src)
 
-macro genWith*(tySym: typed, args:varargs[untyped]): untyped =
-  ## Calls ``gen`` with the fields of the enum or object type passed.
-  ## Used by the fields operator, ``+``, with ``gen`` on a type.
-  assert isTypeDesc(tySym)
+proc fieldsTuple(src, ty: NimNode): seq[NimNode] =
+  for def in ty:
+    for id in def[0..^3]:
+      result.add id
+
+proc fieldsTupleConstr(src, ty: NimNode): seq[NimNode] =
+  for i, sym in ty:
+    result.add newLit(i)
+
+macro genWith*(x: typed, args:varargs[untyped]): untyped =
+  ## Calls ``gen`` with the fields of the variable or type passed in; supports enum, object, and tuple.
+  ## Used by the fields operator, ``+``, with ``gen`` on a symbol.
+  var ty:NimNode = if isTypeDesc(x): 
+      x.getImpl()[2] # get type from typedef
+    else:
+      x.getTypeImpl
 
   let body = args[^1]
 
   result = nnkCall.newTree(ident(MacroTransformerName))
 
-  var fields: seq[NimNode]
-  var impl = tySym.getImpl
-  case impl.kind:
-  of nnkTypeDef:
-    var ty = impl[2]
-    fields = case ty.kind:
-    of nnkEnumTy: fieldsEnum(tySym, ty)
-    of nnkObjectTy: fieldsObject(tySym, ty)
-    else:
-      error(&"Unexpected {ty.kind}", tySym)
-      @[]
+  var fields: seq[NimNode] = case ty.kind:
+  of nnkEnumTy: fieldsEnum(x, ty)
+  of nnkObjectTy: fieldsObject(x, ty)
+  of nnkTupleTy: fieldsTuple(x, ty)
+  of nnkTupleConstr: fieldsTupleConstr(x, ty)
   else:
-    error(&"Unexpected \"{impl.kind}\".", tySym)
+    error(&"Unexpected {ty.kind}", x)
+    @[]
   
   var tyArgName:NimNode
   if args.len > 1:
@@ -952,7 +980,7 @@ macro genWith*(tySym: typed, args:varargs[untyped]): untyped =
       if a.kind == nnkExprEqExpr:
         var lhs = a[0]
         var rhs = a[1]
-        if rhs.kind == nnkIdent and rhs.eqIdent(tySym):
+        if rhs.kind == nnkIdent and rhs.eqIdent(x):
           tyArgName = lhs
         else:
           result.add a
@@ -969,7 +997,7 @@ macro genWith*(tySym: typed, args:varargs[untyped]): untyped =
 
   result.add body
   if printFlag:
-    echo "genWith(", tySym.strVal, ",", args.repr, ")"
+    echo "genWith(", x.strVal, ",", args.repr, ")"
     echo ">>>"
     echo result.repr
     echo "-----"
