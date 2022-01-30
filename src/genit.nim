@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.10.0
+## :Version: 0.11.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -85,9 +85,10 @@ runnableExamples:
 ## Each unnamed argument can be a tuple, and its parts can be accessed by indexing like a regular tuple.
 ## If the indexed tuple is an l-value, it must be surrounded by accent quotes to be legal Nim.
 ##
-## If an unnnamed argument is indexed, it will be "duplicated", so you can mix tuple and non-tuple arguments.
+## If an unnnamed argument is indexed but it is not a tuple, it will be "duplicated", so you can mix tuple and non-tuple arguments.
 ##
 ## If the tuple index is part of a larger expression, e.g. dot expression, accent quoting will run genit's parser on it.
+## Accent quoting will also interrupt multiple indexing.
 runnableExamples:
   gen (first, 1), (second, 2), (third, 3): # produces:
     var `it[0]` = it[1]                    # var first = 1
@@ -113,6 +114,24 @@ runnableExamples:
   
   doAssert val == 10
   doAssert bar == 100
+
+  # multiple tuple indexing with duplication
+  var a = [1, 2, 3]
+  var b = ['a', 'b', 'c']
+
+  gen (ap, a), b:
+    let `it[0] t` = it[1][0].addr
+
+  doAssert apt[] == a
+  doAssert bt[] == b
+
+  # interrupt tuple indexing
+  gen (ap, a), b:
+    let `it[0] p` = `it[1]`[0].addr
+
+  doAssert app[] == 1
+  doAssert bp[] == 'a'
+
 ##
 ## Stringify
 ## ---------
@@ -402,6 +421,7 @@ type Context = object
     nk: NimNodeKind # output kind
     output: NimNode # cached output
     hasItem: bool
+    isAccQuoted: bool # used to distinguish DSL operations from Nim syntax
     children: seq[Context]
     case kind: ContextKind
       of ckGen:
@@ -498,7 +518,7 @@ proc addOpChainToContext(root:var Context, chain: var seq[Context]) =
 proc parseAccQuoted(n: NimNode): Context =
   #decho &"parseAccQuoted"
   #decho n.treeRepr
-  result = Context(kind: ckAccQuoted, nk: nnkAccQuoted)
+  result = Context(kind: ckAccQuoted, nk: nnkAccQuoted, isAccQuoted: true)
 
   var chain: seq[Context] # points to the current child chain for the root
   var tupleIndex: int
@@ -576,10 +596,11 @@ proc parseBracketExpr(n: NimNode): Context =
   #  else ckNode
   var first = parseNode(n[0])
   var second = parseNode(n[1])
-  if first.hasItem:
+  if first.hasItem and not first.isAccQuoted:
     result = Context(kind: ckOpTupleIndex, nk: n.kind, tupleIndex: second.output.intVal.int, children: @[first])
   else:
     # array[..it..], array[expr]
+    # `it[1]`[0] # first is accQuoted, so we ignore the following indexing
     result = Context(kind: ckNode, nk: n.kind, children: @[first, second])
   result.propHasItem()
 
@@ -695,8 +716,8 @@ proc tfOp(c: Context): NimNode =
     var n = first.tf()
     if n.kind == nnkTupleConstr:
       result = n[c.tupleIndex]
-    else:
-      result = n # "duplicate" n along as if it were part of a tuple
+    else: # "duplicate" n as if it were part of a tuple
+      result = n 
   of ckOpStringify:
     var n = first.tf()
     result = newLit(n.repr)

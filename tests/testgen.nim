@@ -133,6 +133,21 @@ test "tuple index in object":
   check val == 10
   check bar == 100
 
+test "tuple, accQuoted, interrupts tuple indexing operator":
+  var a = [1, 2, 3]
+  var b = ['a', 'b', 'c']
+
+  gen (ap, a), b:
+    let `it[0] t` = it[1][0].addr
+
+  check apt[] == a
+  check bt[] == b
+
+  gen (ap, a), b:
+    let `it[0] p` = `it[1]`[0].addr
+  check app[] == 1
+  check bp[] == 'a'
+
 test "two operators":
   gen (first, 1), (second, 2), (third, 3):
     var `^it[0]` = $$it[1] 
