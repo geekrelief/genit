@@ -505,3 +505,11 @@ test "global names":
     var `it c`:int = 3
 
   check dComp == 3
+
+test "nil parameter":
+
+  proc foo(a: int, b: ptr int) = discard
+
+  var bar = 1
+  gen bar:
+    foo(it, nil)

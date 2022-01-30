@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.11.0
+## :Version: 0.11.1
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -795,7 +795,7 @@ proc tfRecList(c: Context): NimNode =
 
 proc tf(c: Context): NimNode =
   #decho &"tf {c.kind} {c.hasItem}"
-  if c.hasItem:
+  result = if c.hasItem:
     case c.kind:
     of ckIt: tfIt(c)
     of ckNamed: c.output
@@ -812,11 +812,13 @@ proc tf(c: Context): NimNode =
       var n = newNimNode(c.nk)
       for child in c.children:
         let childTf = child.tf()
-        if childTf != nil:
+        #if childTf != nil: # why do I do this test? this prevents nil literals from being added as a child because `==` is overloaded for newNimNode(nnkNilLit)
+        if not childTf.isNil: # this checks if the NimNode is nil and passes the tests
           n.add childTf
       n
   else:
     c.output
+  #decho &"tf {result.treerepr}"
 #< AST Transformers
 
 
