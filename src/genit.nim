@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.11.2
+## :Version: 0.11.3
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -25,9 +25,10 @@ runnableExamples:
 ## Unnamed arguments repeat the body and replaces the item identifier, ``it``, with the argument. 
 runnableExamples:
   gen red, green, blue: # produces:
-    var `it Val`: int   # var redVal: int
-                        # var greenVal: int
-                        # var blueVal: int
+    var `it Val`: int   # var 
+                        #   redVal: int
+                        #   greenVal: int
+                        #   blueVal: int
   doAssert typeof(redVal) is int
   doAssert typeof(greenVal) is int
   doAssert typeof(blueVal) is int
@@ -63,9 +64,10 @@ runnableExamples:
 ## The index for unnamed arguments can be accessed using the ``%`` operator.
 runnableExamples:
   gen red, green, blue: # produces
-    var it = %it        # var red = 0
-                        # var green = 1
-                        # var bluel = 2
+    var it = %it        # var 
+                        #   red = 0
+                        #   green = 1
+                        #   bluel = 2
   doAssert red == 0
   doAssert green == 1
   doAssert blue == 2
@@ -75,8 +77,9 @@ runnableExamples:
 ## The item identifier, ``it``, can be renamed using a named argument.
 runnableExamples:
   gen(it = this, a, b): # produces:
-    var this = 1        # var a = 1
-                        # var b = 1
+    var this = 1        # var 
+                        #   a = 1
+                        #   b = 1
   doAssert a == 1
   doAssert b == 1
 ##
@@ -87,13 +90,13 @@ runnableExamples:
 ##
 ## If an unnnamed argument is indexed but it is not a tuple, it will be "duplicated", so you can mix tuple and non-tuple arguments.
 ##
-## If the tuple index is part of a larger expression, e.g. dot expression, accent quoting will run genit's parser on it.
-## Accent quoting will also interrupt multiple indexing.
+## If the tuple index is part of a larger expression, e.g. dot expression, accent quoting will run genit's parser on it.  Accent quoting will also interrupt multiple indexing.
 runnableExamples:
   gen (first, 1), (second, 2), (third, 3): # produces:
-    var `it[0]` = it[1]                    # var first = 1
-                                           # var second = 2
-                                           # var third = 3
+    var `it[0]` = it[1]                    # var 
+                                           #   first = 1
+                                           #   second = 2
+                                           #   third = 3
   doAssert first == 1
   doAssert second == 2
   doAssert third == 3
@@ -138,8 +141,9 @@ runnableExamples:
 ## The ``$$``, stringify, operator turns an identifier into a string.
 runnableExamples:
   gen(l = Label, name, age): # produces
-    var `it l` = $$it & $$l  # var nameLabel = "nameLabel"
-                             # var ageLabel = "ageLabel"
+    var `it l` = $$it & $$l  # var 
+                             #   nameLabel = "nameLabel"
+                             #   ageLabel = "ageLabel"
   doAssert nameLabel == "nameLabel"
   doAssert ageLabel == "ageLabel"
 
@@ -235,7 +239,7 @@ runnableExamples:
 ##
 ## Multiple Statements and Nesting
 ## -------------------------------
-## When using multiple states in a gen macro, each statement will be produced at least 
+## When using multiple statements in a gen macro, each statement will be produced at least 
 ## once even if there are no arguments. And each statement will be produced once 
 ## for each unnamed argument using the item identifier, unless its a special construct
 ## like a ``case`` statement or type definition. It's better to split the ``gen``
