@@ -22,8 +22,9 @@ test "basic items":
   
   check sum == 3
 
-  gen r, g, b:
-    let it = 1
+  debug:
+    gen r, g, b:
+      let it = 1
   
   check declared(r)
   check r == 1
@@ -480,6 +481,7 @@ test "fields type used in nested call":
   check red.r == 255'u8
   check green.g == 255'u8
   check blue.b == 255'u8
+
 
 test "global names":
   gen(c = Component)

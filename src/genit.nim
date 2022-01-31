@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.11.1
+## :Version: 0.11.2
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -313,7 +313,7 @@ runnableExamples:
 #     Modify tf functions for traversing the Context tree
 #     Modify `tfOp` for operations
 
-import std / [ macros, tables, strformat, genasts, strutils ]
+import std / [ macros, tables, strformat, genasts, strutils, options ]
 from sequtils import anyIt
 
 #> Debug
@@ -419,7 +419,7 @@ proc item(itemScope: NimNode): NimNode {.inline.} =
 
 type Context = object
     nk: NimNodeKind # output kind
-    output: NimNode # cached output
+    output: Option[NimNode] # cached output
     hasItem: bool
     isAccQuoted: bool # used to distinguish DSL operations from Nim syntax
     children: seq[Context]
@@ -445,8 +445,9 @@ proc propHasItem(c:var Context): Context {.discardable.} =
   if not c.hasItem:
     var n = newNimNode(c.nk)
     for child in c.children:
-      n.add child.output
-    c.output = n
+      if child.output.isSome:
+        n.add child.output.get
+    c.output = some(n)
   c
 
 #< Parsing helper functions
@@ -475,15 +476,15 @@ proc parseIdentKind(n: NimNode): Context =
   for lhs, rhs in scope.named:
     if n.eqIdent(lhs):
       #decho &"--ckNamed nnkIdent ({lhs} => {rhs.repr})"
-      return Context(nk: nnkIdent, kind: ckNamed, output: rhs)
+      return Context(nk: nnkIdent, kind: ckNamed, output: some(rhs))
 
   for lhs, rhs in globalNamed:
     if n.eqIdent(lhs):
       #decho &"--ckNamed nnkIdent global ({lhs} => {rhs.repr})"
-      return Context(nk: nnkIdent, kind: ckNamed, output: rhs)
+      return Context(nk: nnkIdent, kind: ckNamed, output: some(rhs))
 
   #decho &"--ckNode {n.repr}"
-  Context(kind: ckNode, nk: nnkIdent, output: n)
+  Context(kind: ckNode, nk: nnkIdent, output: some(n))
 
 
 proc parseLitKind(n: NimNode): Context =
@@ -492,7 +493,10 @@ proc parseLitKind(n: NimNode): Context =
     parseIdentKind(n)
   else:
     #decho &"LitKind {n.kind} {n.repr}"
-    Context(nk: n.kind, kind: ckNode, output: n)
+    if n.isNil: # vargargs[untyped] for some reason makes this n.isNil true, if nil was passed without varargs n.isNil would be false
+      Context(nk: n.kind, kind: ckNode, output: some(newNimNode(nnkNilLit)))
+    else:
+      Context(nk: n.kind, kind: ckNode, output: some(n))
 
 
 type AccQuotedState = enum
@@ -533,23 +537,23 @@ proc parseAccQuoted(n: NimNode): Context =
       if childContext.hasItem:
         state = aqIt
         chain.add childContext
-      elif AccQuotedOperators.anyIt(it in childContext.output.strVal):
+      elif AccQuotedOperators.anyIt(it in childContext.output.get.strVal):
         state = aqPrefix
-        let op = childContext.output.strVal
+        let op = childContext.output.get.strVal
         assert op.len == 1, "only one prefix operator allowed"
         if op == ItIndexPrefix:
           childContext = Context(kind: ckOpItIndex)
         elif op == CapitalizePrefix:
           childContext = Context(kind: ckOpCapitalize)
         chain.add childContext
-      elif StringifyPrefix in childContext.output.strVal:
+      elif StringifyPrefix in childContext.output.get.strVal:
         error(&"Stringify operator, '$$', not allowed in identifier", n)
       else:
         # stay at root
         result.children.add childContext
     of aqIt:
       assert not childContext.hasItem, "item identifier appeared again?"
-      if childContext.output.strVal == "[":
+      if childContext.output.get.strVal == "[":
         state = aqBracketOpen
       else:
         result.addOpChainToContext(chain)
@@ -558,12 +562,12 @@ proc parseAccQuoted(n: NimNode): Context =
     of aqBracketOpen:
       # only accept ints
       try:
-        tupleIndex = parseInt(childContext.output.strVal)
+        tupleIndex = parseInt(childContext.output.get.strVal)
       except ValueError:
         error(&"Tuple index must be a static int.", n)
       state = aqTupleIndex
     of aqTupleIndex:
-      assert childContext.output.strVal == "]"
+      assert childContext.output.get.strVal == "]"
       var itContext = chain[0]
       var rest = chain[1..^1]
       chain.setLen 0
@@ -580,7 +584,7 @@ proc parseAccQuoted(n: NimNode): Context =
   result.addOpChainToContext(chain)
   result.propHasItem()
   #if not result.hasItem:
-    #decho &"parseAccQuoted output: {result.output.repr}"
+    #decho &"parseAccQuoted output: {result.output.get.repr}"
 
 
 proc parseBracketExpr(n: NimNode): Context =
@@ -597,7 +601,7 @@ proc parseBracketExpr(n: NimNode): Context =
   var first = parseNode(n[0])
   var second = parseNode(n[1])
   if first.hasItem and not first.isAccQuoted:
-    result = Context(kind: ckOpTupleIndex, nk: n.kind, tupleIndex: second.output.intVal.int, children: @[first])
+    result = Context(kind: ckOpTupleIndex, nk: n.kind, tupleIndex: second.output.get.intVal.int, children: @[first])
   else:
     # array[..it..], array[expr]
     # `it[1]`[0] # first is accQuoted, so we ignore the following indexing
@@ -621,12 +625,12 @@ proc parsePrefix(n: NimNode): Context =
       else: 
         Context(kind: ckEmpty)
     else:
-      assert child.output.kind == nnkIdent
+      assert child.output.get.kind == nnkIdent
       case prefix:
       of StringifyPrefix:
-        Context(kind: ckNode, output: newLit(child.output.repr))
+        Context(kind: ckNode, output: some(newLit(child.output.get.repr)))
       of CapitalizePrefix:
-        Context(kind: ckNode, output: ident(child.output.strVal.capitalizeAscii))
+        Context(kind: ckNode, output: some(ident(child.output.get.strVal.capitalizeAscii)))
       else:
         error(&"parsePrefix unexpected '{prefix}'", n)
         Context(kind: ckEmpty)
@@ -673,63 +677,64 @@ proc parseNode(n: NimNode): Context =
 
 
 #> AST Transformers
-proc tf(c: Context): NimNode
+proc tf(c: Context): Option[NimNode]
 
-proc tfIt(c: Context): NimNode =
+proc tfIt(c: Context): Option[NimNode] =
   for itemScope in scope.itScopes:
     if itemScope.itsName.eqIdent(c.itsName):
-      return itemScope.item
+      return some(itemScope.item)
   error(&"Could not find \"{c.itsName}\" in scopes.")
 
 
-proc tfInner(c: Context): seq[NimNode] =
+proc tfInner(c: Context): seq[Option[NimNode]] =
   var itemScope = scope.itemStack[^1]
   if itemScope.items.len > 0:
     for i in 0 ..< itemScope.items.len:
       itemScope.itIndex.intVal = i
       var o = tf(c)
-      if o != nil:
+      if o.isSome:
         result.add o
         #decho &"tfInner {itemScope.repr = }\n--- {result.repr = }"
   else:
     var o = tf(c)
-    if o != nil:
+    if o.isSome:
       result.add o
       #decho &"tfInner {result.repr = }"
 
 
-proc tfGen(c: Context): NimNode =
+proc tfGen(c: Context): Option[NimNode] =
   # pass in named and unnamed items into the call
-  result = newTree(nnkCall, ident(MacroTransformerName))
+  let res = newTree(nnkCall, ident(MacroTransformerName))
+  result = some(res)
   
   for lhs, rhs in scope.named:
-    result.add newTree(nnkExprEqExpr, ident(lhs), rhs)
-  result.add newTree(nnkExprEqExpr, ident(ItemStackName), scope.itemStack.copyNimTree)
-  result.add c.callsite[1..^1]
+    res.add newTree(nnkExprEqExpr, ident(lhs), rhs)
+  res.add newTree(nnkExprEqExpr, ident(ItemStackName), scope.itemStack.copyNimTree)
+  res.add c.callsite[1..^1]
 
 
-proc tfOp(c: Context): NimNode =
+proc tfOp(c: Context): Option[NimNode] =
   #decho 0, "tfItem"
   var first = if c.children.len > 0 : c.children[0] else: Context(kind: ckEmpty)
   case c.kind:
   of ckOpTupleIndex:
-    var n = first.tf()
+    var n = first.tf().get
     if n.kind == nnkTupleConstr:
-      result = n[c.tupleIndex]
+      result = some(n[c.tupleIndex])
     else: # "duplicate" n as if it were part of a tuple
-      result = n 
+      result = some(n)
   of ckOpStringify:
-    var n = first.tf()
-    result = newLit(n.repr)
+    var n = first.tf().get
+    result = some(newLit(n.repr))
   of ckOpItIndex:
     assert first.kind == ckIt
     for itemScope in scope.itScopes:
       if itemScope.itsName.eqIdent(first.itsName):
-        result = itemScope.itIndex.copyNimNode
+        result = some(itemScope.itIndex.copyNimNode)
         break
   of ckOpCapitalize:
-    var n = first.tf()
-    result = ident(n.strVal.capitalizeAscii)
+    var n = first.tf().get
+    result = some(ident(n.strVal.capitalizeAscii))
   else:
     discard
 
@@ -742,58 +747,68 @@ proc isOnLastItem(): bool =
     scope.itemStack[^1].items.len - 1 == scope.itemStack[^1].index
 
 
-proc tfVarSection(c: Context): NimNode =
+proc tfVarSection(c: Context): Option[NimNode] =
   #decho &"tfVarSection {c.nk} {isOnLastItem() = }"
   if isOnLastItem():
-    result = newTree(c.nk)
+    let res = newTree(c.nk)
+    result = some(res)
     for defc in c.children:
       if defc.hasItem:
-        result.add tfInner(defc)
+        for n in tfInner(defc):
+          if n.isSome:
+            res.add n.get
       else:
-        result.add defc.output
+        res.add defc.output.get
 
 
-proc tfCase(c: Context): NimNode =
+proc tfCase(c: Context): Option[NimNode] =
   # case should only return the entire case statement on the last index, of last scope item index
   if isOnLastItem():
-    result = newTree(nnkCaseStmt, c.children[0].output)
-    result.add tfInner(c.children[1])
+    let res = newTree(nnkCaseStmt, c.children[0].output.get)
+    result = some(res)
+    for n in tfInner(c.children[1]):
+      if n.isSome:
+        res.add n.get
     if c.children[^1].nk == nnkElse:
-      result.add c.children[^1].tf()
+      res.add c.children[^1].tf().get
 
 
-proc tfTypeSection(c: Context): NimNode =
+proc tfTypeSection(c: Context): Option[NimNode] =
   #decho &"tfTypeSection {c.nk}"
   if isOnLastItem():
-    result = newTree(c.nk)
+    let res = newTree(c.nk)
+    result = some(res)
     for defc in c.children:
       if defc.hasItem:
-        result.add tf(defc)
+        res.add tf(defc).get
       else:
-        result.add defc.output
+        res.add defc.output.get
 
-proc tfEnumTy(c: Context): NimNode =
+proc tfEnumTy(c: Context): Option[NimNode] =
   assert c.children.len == 2
-  result = newTree(nnkEnumTy, c.children[0].output)
+  let res = newTree(nnkEnumTy, c.children[0].output.get)
+  result = some(res)
   var def = c.children[1]
   var itemScope = scope.itemStack[^1]
   for i in 0 ..< itemScope.items.len:
     itemScope.itIndex.intVal = i
-    result.add tf(def)
+    res.add tf(def).get
 
-proc tfObjectTy(c: Context): NimNode =
-  result = newTree(nnkObjectTy, c.children[0].output, c.children[1].output) # 0: pragmas, 1: nnkOfInherit
-  result.add tf(c.children[2])
+proc tfObjectTy(c: Context): Option[NimNode] =
+  let res = newTree(nnkObjectTy, c.children[0].output.get, c.children[1].output.get) # 0: pragmas, 1: nnkOfInherit
+  result = some(res)
+  res.add tf(c.children[2]).get
 
-proc tfRecList(c: Context): NimNode =
-  result = newTree(nnkRecList)
+proc tfRecList(c: Context): Option[NimNode] =
+  let res = newTree(nnkRecList)
+  result = some(res)
   var itemScope = scope.itemStack[^1]
   for i in 0..<itemScope.items.len:
     itemScope.itIndex.intVal = i
     for def in c.children:
-      result.add tf(def)
+      res.add tf(def).get
 
-proc tf(c: Context): NimNode =
+proc tf(c: Context): Option[NimNode] =
   #decho &"tf {c.kind} {c.hasItem}"
   result = if c.hasItem:
     case c.kind:
@@ -812,10 +827,9 @@ proc tf(c: Context): NimNode =
       var n = newNimNode(c.nk)
       for child in c.children:
         let childTf = child.tf()
-        #if childTf != nil: # why do I do this test? this prevents nil literals from being added as a child because `==` is overloaded for newNimNode(nnkNilLit)
-        if not childTf.isNil: # this checks if the NimNode is nil and passes the tests
-          n.add childTf
-      n
+        if childTf.isSome: 
+          n.add childTf.get
+      some(n)
   else:
     c.output
   #decho &"tf {result.treerepr}"
@@ -917,12 +931,15 @@ macro gen*(va: varargs[untyped]): untyped =
 
   #decho "-- transform"
   result = newNimNode(nnkStmtList)
-  result.add c.tfInner()
+  for n in c.tfInner():
+    if n.isSome:
+      result.add n.get
   if printFlag:
     echo "-----"
     echo "gen ", va.repr
     echo ">>> result"
     echo result.repr
+    echo result.treerepr
     echo ">>----"
     echo "itemStack post tf " & scope.itemStack.repr
     echo "------"
