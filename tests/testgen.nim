@@ -431,6 +431,29 @@ test "fields operator with tuple":
   check res.x == 110f
   check res.z == 330f
 
+test "fields operator with array":
+  var v4:array[4, float32] = [10'f32, 20, 30, 40]
+  var v3:array[1..3, float32]
+
+  gen +v3:
+    v3[it] = v4[it]
+
+  check v3[1] == 20'f32
+  check v3[3] == 40'f32
+
+
+test "fields operator with range":
+  type r = range[1..3]
+  var v4:array[4, float32] = [10'f32, 20, 30, 40]
+  var v3:array[1..3, float32]
+
+  gen +range[1..3]:
+    v3[it] = v4[it]
+
+  check v3[1] == 20'f32
+  check v3[3] == 40'f32
+
+
 test "fields operator with symbol":
   type
     Vec3 = tuple[x, y: float32, z: float32]

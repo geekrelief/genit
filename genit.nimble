@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.11.3"
+version       = "0.12.0"
 author        = "Don-Duong Quach"
 description   = "A macro/DSL for inlining templates."
 license       = "MIT"

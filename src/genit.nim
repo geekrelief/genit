@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.11.3
+## :Version: 0.12
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -188,7 +188,7 @@ runnableExamples:
 ## -----------
 ## Passing in a type or symbol prefixed with the fields operator, ``+``, will pass in the 
 ## type's fields as unnamed items. Internally this uses ``genWith`` and
-## only supports Enum, Object, and Tuple types.
+## supports Enum, Object, Tuple, Array, and Range types.
 runnableExamples:
   type ColorIndex = enum
     none = -1
@@ -236,6 +236,16 @@ runnableExamples:
 
   doAssert res.x == 1f
   doAssert res.z == 3f
+
+  var v4:array[4, float32] = [1'f32, 0.5, 0.25, 1]
+  var v3:array[1..3, byte]
+
+  gen +v3:
+    v3[it] = (v4[it - 1] * 255.99f).byte
+
+  doAssert v3[1] == 255
+  doAssert v3[2] == 127
+  doAssert v3[3] == 63
 ##
 ## Multiple Statements and Nesting
 ## -------------------------------
@@ -949,11 +959,6 @@ macro gen*(va: varargs[untyped]): untyped =
     echo "------"
 
 #> == it over type fields
-proc isTypeDesc(n: NimNode): bool =
-  var t = n.getType
-  t.kind == nnkBracketExpr and t[0].kind == nnkSym and t[0].strVal == "typeDesc"
-
-
 proc fieldsEnum(src, ty: NimNode): seq[NimNode] =
   # EnumTy
   for n in ty:
@@ -997,11 +1002,24 @@ proc fieldsTupleConstr(src, ty: NimNode): seq[NimNode] =
   for i, sym in ty:
     result.add newLit(i)
 
+proc fieldsBracket(src, ty: NimNode): seq[NimNode] =
+  var l = ty[1][1].intVal
+  var r = ty[1][2].intVal
+  for i in l..r:
+    result.add newlit(i)
+
+proc isTypeDesc(n: NimNode): bool =
+  var t = n.getType
+  t.kind == nnkBracketExpr and t[0].kind == nnkSym and t[0].strVal == "typeDesc"
+
 macro genWith*(x: typed, args:varargs[untyped]): untyped =
   ## Calls ``gen`` with the fields of the variable or type passed in; supports enum, object, and tuple.
   ## Used by the fields operator, ``+``, with ``gen`` on a symbol.
   var ty:NimNode = if isTypeDesc(x): 
-      x.getImpl()[2] # get type from typedef
+      if x.kind == nnkSym:
+        x.getImpl()[2] # get type from typedef
+      else:
+        x # range, array are types
     else:
       x.getTypeImpl
 
@@ -1014,8 +1032,9 @@ macro genWith*(x: typed, args:varargs[untyped]): untyped =
   of nnkObjectTy: fieldsObject(x, ty)
   of nnkTupleTy: fieldsTuple(x, ty)
   of nnkTupleConstr: fieldsTupleConstr(x, ty)
+  of nnkBracketExpr: fieldsBracket(x, ty)
   else:
-    error(&"Unexpected {ty.kind}", x)
+    error(&"Unexpected {ty.kind}\n{ty.treerepr}", x)
     @[]
   
   var tyArgName:NimNode
