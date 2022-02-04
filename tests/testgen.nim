@@ -538,3 +538,31 @@ test "nil parameter":
   var bar = 1
   gen bar:
     foo(it, nil)
+
+
+test "it on type":
+  type SomeMode = enum
+    A
+  gen foo, bar, baz:
+    type `^it` = ref object of RootObj
+
+  check declared(Foo)
+  check declared(Bar)
+  check declared(Baz)
+
+#[
+test "complex it on type":
+  type SomeMode = enum
+    A
+  gen somemodel, another, andanother:
+    type `^it` = ref object of RootObj
+
+    type TableModelKind = enum
+      `tmk it` = $$it
+
+    # problem here case else is nil
+    type TableModelVariant* = ref object
+      case kind: TableModelKind
+      of TableModelKind.`tmk it`: it: SomeMode
+      else: discard
+]#

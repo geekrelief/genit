@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.12.0"
+version       = "0.13.0"
 author        = "Don-Duong Quach"
 description   = "A macro/DSL for inlining templates."
 license       = "MIT"
@@ -9,7 +9,7 @@ srcDir        = "src"
 
 # Dependencies
 
-requires "nim >= 1.7.1"
+requires "nim >= 1.6.2"
 
 task gendoc, "generate docs":
   exec "nim doc ./src/genit.nim"

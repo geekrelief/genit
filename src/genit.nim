@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.12
+## :Version: 0.13
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -403,6 +403,8 @@ type ContextKind = enum
     ckEnumTy
     ckObjectTy
     ckRecList
+const OpKinds = { ckOpTupleIndex..ckOpCapitalize }
+const HasItKinds = { ckIt, ckAccQuoted } + OpKinds + { ckTypeDef }
 
 type Scope = object
     itsName: NimNode
@@ -444,6 +446,8 @@ type Context = object
         itsName: NimNode
       of ckOpTupleIndex:
         tupleIndex: int
+      of ckTypeDef:
+        isIt: bool
       else: discard
 
 #> Parsing functions
@@ -663,6 +667,17 @@ proc parseSection(n: NimNode): Context =
   result.propHasItem()
 
 
+proc parseTypeDef(n: NimNode): Context =
+  #decho &"parseTypeDef"
+  result = Context(kind: ckTypeDef, nk: n.kind)
+  for child in n:
+    var childContext = parseNode(child)
+    result.children.add childContext
+    if childContext.hasItem and (childContext.kind == ckAccQuoted or childContext.kind == ckIt):
+      result.isIt = true
+  result.propHasItem()
+
+
 proc parseNode(n: NimNode): Context =
   #decho &"enter parseNode {n.kind} {n.repr}"
   result = case n.kind:
@@ -678,7 +693,7 @@ proc parseNode(n: NimNode): Context =
     of nnkVarSection, nnkLetSection, nnkConstSection, nnkTypeSection: 
       parseSection(n)
     of nnkCaseStmt: parseMulti(n, ckCaseStmt)
-    of nnkTypeDef: parseMulti(n, ckTypeDef)
+    of nnkTypeDef: parseTypeDef(n)
     of nnkEnumTy: parseMulti(n, ckEnumTy)
     of nnkObjectTy: parseMulti(n, ckObjectTy)
     of nnkRecList: parseMulti(n, ckRecList)
@@ -788,15 +803,28 @@ proc tfCase(c: Context): Option[NimNode] =
 
 
 proc tfTypeSection(c: Context): Option[NimNode] =
-  #decho &"tfTypeSection {c.nk}"
   if isOnLastItem():
+    #decho &"tfTypeSection {c.nk}"
     let res = newTree(c.nk)
     result = some(res)
-    for defc in c.children:
-      if defc.hasItem:
-        res.add tf(defc).get
-      else:
-        res.add defc.output.get
+    var itemScope = scope.itemStack[^1]
+    for i in 0 ..< itemScope.items.len:
+      itemScope.itIndex.intVal = i
+      for defc in c.children:
+        if defc.hasItem:
+          var cres = tf(defc)
+          if cres.isSome:
+            res.add cres.get
+        else:
+          res.add defc.output.get
+
+proc tfTypeDef(c: Context): Option[NimNode] =
+  #decho "tfTypeDef"
+  if c.isIt or isOnLastItem():
+    let res = newTree(c.nk)
+    result = some(res)
+    for child in c.children:
+      res.add child.tf().get
 
 proc tfEnumTy(c: Context): Option[NimNode] =
   assert c.children.len == 2
@@ -834,6 +862,7 @@ proc tf(c: Context): Option[NimNode] =
     of ckVarSection: tfVarSection(c)
     of ckCaseStmt: tfCase(c)
     of ckTypeSection: tfTypeSection(c)
+    of ckTypeDef: tfTypeDef(c)
     of ckEnumTy: tfEnumTy(c)
     of ckObjectTy: tfObjectTy(c)
     of ckRecList: tfRecList(c)
@@ -848,7 +877,6 @@ proc tf(c: Context): Option[NimNode] =
     c.output
   #decho &"tf {result.treerepr}"
 #< AST Transformers
-
 
 macro gen*(va: varargs[untyped]): untyped =
   ## Implements the DSL.
@@ -953,6 +981,7 @@ macro gen*(va: varargs[untyped]): untyped =
     echo "gen ", va.repr
     echo ">>> result"
     echo result.repr
+    echo ">>----"
     echo result.treerepr
     echo ">>----"
     echo "itemStack post tf " & scope.itemStack.repr
