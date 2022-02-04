@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.13
+## :Version: 0.13.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -692,7 +692,7 @@ proc parseNode(n: NimNode): Context =
     of nnkPrefix: parsePrefix(n)
     of nnkVarSection, nnkLetSection, nnkConstSection, nnkTypeSection: 
       parseSection(n)
-    of nnkCaseStmt: parseMulti(n, ckCaseStmt)
+    of nnkCaseStmt, nnkRecCase: parseMulti(n, ckCaseStmt)
     of nnkTypeDef: parseTypeDef(n)
     of nnkEnumTy: parseMulti(n, ckEnumTy)
     of nnkObjectTy: parseMulti(n, ckObjectTy)
@@ -793,7 +793,7 @@ proc tfVarSection(c: Context): Option[NimNode] =
 proc tfCase(c: Context): Option[NimNode] =
   # case should only return the entire case statement on the last index, of last scope item index
   if isOnLastItem():
-    let res = newTree(nnkCaseStmt, c.children[0].output.get)
+    let res = newTree(c.nk, c.children[0].output.get)
     result = some(res)
     for n in tfInner(c.children[1]):
       if n.isSome:
@@ -818,6 +818,7 @@ proc tfTypeSection(c: Context): Option[NimNode] =
         else:
           res.add defc.output.get
 
+
 proc tfTypeDef(c: Context): Option[NimNode] =
   #decho "tfTypeDef"
   if c.isIt or isOnLastItem():
@@ -825,6 +826,7 @@ proc tfTypeDef(c: Context): Option[NimNode] =
     result = some(res)
     for child in c.children:
       res.add child.tf().get
+
 
 proc tfEnumTy(c: Context): Option[NimNode] =
   assert c.children.len == 2
@@ -848,7 +850,9 @@ proc tfRecList(c: Context): Option[NimNode] =
   for i in 0..<itemScope.items.len:
     itemScope.itIndex.intVal = i
     for def in c.children:
-      res.add tf(def).get
+      var tfdef = tf(def)
+      if tfdef.isSome:
+        res.add tfdef.get
 
 proc tf(c: Context): Option[NimNode] =
   #decho &"tf {c.kind} {c.hasItem}"
@@ -979,6 +983,8 @@ macro gen*(va: varargs[untyped]): untyped =
   if printFlag:
     echo "-----"
     echo "gen ", va.repr
+    echo "----- body tree"
+    echo body.treeRepr
     echo ">>> result"
     echo result.repr
     echo ">>----"
