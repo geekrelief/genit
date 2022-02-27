@@ -570,3 +570,9 @@ test "it on type":
   tmv.kind = tmkBaz
   tmv.baz = B
   check tmv.baz == B
+
+test "bracket with type arg":
+  gen a:
+    var it: array[1, int]
+
+  check declared(a)

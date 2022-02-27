@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.13.0
+## :Version: 0.13.1
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -612,18 +612,21 @@ proc parseBracketExpr(n: NimNode): Context =
   #   Ident it[0] # hasItem
   # second child:
   #   IntLit it[0]
+  # third child: Type for array definition
+  #   Ident, TupleConst, etc.  array[0, (string, string)]
   #
   # need to parse first child and see if it has it
   #  if yes then ContextKind is ckOpTupleIndex
   #  else ckNode
   var first = parseNode(n[0])
   var second = parseNode(n[1])
+  
   if first.hasItem and not first.isAccQuoted:
     result = Context(kind: ckOpTupleIndex, nk: n.kind, tupleIndex: second.output.get.intVal.int, children: @[first])
   else:
-    # array[..it..], array[expr]
+    # array[..it..], array[expr], array[IntLit, T]
     # `it[1]`[0] # first is accQuoted, so we ignore the following indexing
-    result = Context(kind: ckNode, nk: n.kind, children: @[first, second])
+    result = parseMulti(n)
   result.propHasItem()
 
 proc parsePrefix(n: NimNode): Context =
