@@ -174,7 +174,15 @@ test "stringify named":
   check nameLabel == "nameLabel"
   check ageLabel == "ageLabel"
 
-test "capitalize":
+test "lowercase":
+  gen Red, Green, Blue:
+    var `-it` = $$it
+  
+  check red == "Red"
+  check green == "Green"
+  check blue == "Blue"
+
+test "uppercase / capitalize":
   gen red, green, blue:
     var `^it` = $$it
   

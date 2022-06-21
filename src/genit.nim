@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.13.1
+## :Version: 0.14.1
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -148,9 +148,21 @@ runnableExamples:
   doAssert ageLabel == "ageLabel"
 
 ##
-## Capitalize
-## ----------
-## The ``^`` operator will capitalize the first letter of an identifier.
+## Lowercase
+## ---------
+## The ``-`` operator will lowercase the first letter of an identifier.
+runnableExamples:
+  gen Red, Green, Blue:
+    var `-it` = $$it
+  
+  doAssert red == "Red"
+  doAssert green == "Green"
+  doAssert blue == "Blue"
+
+##
+## Uppercase / Capitalize
+## ----------------------
+## The ``^`` operator will uppercase / capitalize the first letter of an identifier.
 runnableExamples:
   gen red, green, blue:
     var `^it` = $$it
@@ -158,6 +170,7 @@ runnableExamples:
   doAssert Red == "red"
   doAssert Green == "green"
   doAssert Blue == "blue"
+
 ##
 ## Expansion
 ## ---------
@@ -369,12 +382,13 @@ const ItemStackName = "genItemStack"
 const ItsName = "it"
 const StringifyPrefix = "$$"
 const ItIndexPrefix = "%"
-const CapitalizePrefix = "^"
+const LowercasePrefix = "-"
+const UppercasePrefix = "^"
 const ExpandPrefix = "~"
 const FieldsPrefix = "+"
 const GlobalInfix = ":="
-const Operators = [ StringifyPrefix, ItIndexPrefix, CapitalizePrefix ]
-const AccQuotedOperators = [ ItIndexPrefix, CapitalizePrefix ] # operators that work in accQuoted
+const Operators = [ StringifyPrefix, ItIndexPrefix, LowercasePrefix, UppercasePrefix ]
+const AccQuotedOperators = [ ItIndexPrefix, LowercasePrefix, UppercasePrefix ] # operators that work in accQuoted
 
 var globalNamed {.compileTime.}: Table[string, NimNode]
 
@@ -394,7 +408,8 @@ type ContextKind = enum
     ckOpTupleIndex # it[n]
     ckOpStringify # $$it = item -> "item"
     ckOpItIndex # %it => item index
-    ckOpCapitalize # ^it = item -> Item
+    ckOpLowercase # -it = Item -> item
+    ckOpUppercase # ^it = item -> Item
     ckVarSection
     ckCaseStmt
     ckOfBranch
@@ -403,8 +418,8 @@ type ContextKind = enum
     ckEnumTy
     ckObjectTy
     ckRecList
-const OpKinds = { ckOpTupleIndex..ckOpCapitalize }
-const HasItKinds = { ckIt, ckAccQuoted } + OpKinds + { ckTypeDef }
+#const OpKinds = { ckOpTupleIndex..ckOpUppercase }
+#const HasItKinds = { ckIt, ckAccQuoted } + OpKinds + { ckTypeDef }
 
 type Scope = object
     itsName: NimNode
@@ -561,8 +576,10 @@ proc parseAccQuoted(n: NimNode): Context =
         assert op.len == 1, "only one prefix operator allowed"
         if op == ItIndexPrefix:
           childContext = Context(kind: ckOpItIndex)
-        elif op == CapitalizePrefix:
-          childContext = Context(kind: ckOpCapitalize)
+        elif op == LowercasePrefix:
+          childContext = Context(kind: ckOpLowercase)
+        elif op == UppercasePrefix:
+          childContext = Context(kind: ckOpUppercase)
         chain.add childContext
       elif StringifyPrefix in childContext.output.get.strVal:
         error(&"Stringify operator, '$$', not allowed in identifier", n)
@@ -641,8 +658,10 @@ proc parsePrefix(n: NimNode): Context =
         Context(kind: ckOpStringify, hasItem: true, children: @[child])
       of ItIndexPrefix:
         Context(kind: ckOpItIndex, hasItem: true, children: @[child])
-      of CapitalizePrefix:
-        Context(kind: ckOpCapitalize, hasItem: true, children: @[child])
+      of LowercasePrefix:
+        Context(kind: ckOpLowercase, hasItem: true, children: @[child])
+      of UppercasePrefix:
+        Context(kind: ckOpUppercase, hasItem: true, children: @[child])
       else: 
         Context(kind: ckEmpty)
     else:
@@ -650,8 +669,10 @@ proc parsePrefix(n: NimNode): Context =
       case prefix:
       of StringifyPrefix:
         Context(kind: ckNode, output: some(newLit(child.output.get.repr)))
-      of CapitalizePrefix:
-        Context(kind: ckNode, output: some(ident(child.output.get.strVal.capitalizeAscii)))
+      of LowercasePrefix:
+        Context(kind: ckNode, output: some(ident(child.output.get.strVal.toLowerAscii)))
+      of UppercasePrefix:
+        Context(kind: ckNode, output: some(ident(child.output.get.strVal.toUpperAscii)))
       else:
         error(&"parsePrefix unexpected '{prefix}'", n)
         Context(kind: ckEmpty)
@@ -764,9 +785,12 @@ proc tfOp(c: Context): Option[NimNode] =
       if itemScope.itsName.eqIdent(first.itsName):
         result = some(itemScope.itIndex.copyNimNode)
         break
-  of ckOpCapitalize:
+  of ckOpUppercase:
     var n = first.tf().get
-    result = some(ident(n.strVal.capitalizeAscii))
+    result = some(ident(n.strVal.toUpperAscii))
+  of ckOpLowercase:
+    var n = first.tf().get
+    result = some(ident(n.strVal.toLowerAscii))
   else:
     discard
 
@@ -864,7 +888,7 @@ proc tf(c: Context): Option[NimNode] =
     of ckIt: tfIt(c)
     of ckNamed: c.output
     of ckGen: tfGen(c)
-    of ckOpTupleIndex, ckOpStringify, ckOpItIndex, ckOpCapitalize:
+    of ckOpTupleIndex, ckOpStringify, ckOpItIndex, ckOpLowercase, ckOpUppercase:
       tfOp(c)
     of ckVarSection: tfVarSection(c)
     of ckCaseStmt: tfCase(c)
