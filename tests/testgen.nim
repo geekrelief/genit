@@ -1,4 +1,4 @@
-import std / [unittest, strformat]
+import std / [unittest, strformat, macros, genasts]
 
 import genit
 
@@ -22,9 +22,8 @@ test "basic items":
   
   check sum == 3
 
-  debug:
-    gen r, g, b:
-      let it = 1
+  gen r, g, b:
+    let it = 1
   
   check declared(r)
   check r == 1
@@ -166,7 +165,6 @@ test "stringify and index":
   check green == ("green", 1)
   check blue == ("blue", 2)
 
-
 test "stringify named":
   gen(l = Label, name, age):
     var `it l` = $$it & $$l
@@ -174,21 +172,28 @@ test "stringify named":
   check nameLabel == "nameLabel"
   check ageLabel == "ageLabel"
 
-test "lowercase":
-  gen Red, Green, Blue:
-    var `-it` = $$it
-  
-  check red == "Red"
-  check green == "Green"
-  check blue == "Blue"
-
-test "uppercase / capitalize":
-  gen red, green, blue:
-    var `^it` = $$it
+test "lowercase, uppercase, capitalize":
+  gen Red:
+    var it = $$ -it
   
   check Red == "red"
-  check Green == "green"
-  check Blue == "blue"
+
+  gen green:
+    var `it` = $$ /it
+  
+  check green == "GREEN"
+
+  gen blue:
+    var `it` = $$ ^it
+  
+  check blue == "Blue"
+
+
+test "tuple and upper/lower casing":
+  gen (Leftshift, run):
+    let `-it[0]` = $$ /it[1]
+  
+  check leftshift == "RUN"
 
 test "case":
   type Color = enum
