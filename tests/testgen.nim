@@ -579,8 +579,8 @@ test "it on type":
   var tmv = TableModelVariant(kind: tmkFoo)
   tmv.foo = A
   check tmv.foo == A
-
-  tmv.kind = tmkBaz
+  {.cast(uncheckedAssign).}:
+    tmv.kind = tmkBaz
   tmv.baz = B
   check tmv.baz == B
 
