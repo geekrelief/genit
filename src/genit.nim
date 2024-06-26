@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.15.0
+## :Version: 0.16.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -12,9 +12,9 @@
 ## Rules
 ## =====
 ##
-## genit process nnkAccQuoted identifiers, i.e. backticks surrounding identifiers, to generate
+## genit processes `nnkAccQuoted` NimNodes, i.e. indentifiers surrounded by backticks, to generate
 ## substitutions into blocks of code. If the resulting accQuoted identifier is valid without
-## backticks, then the backticks are removed. The accQuoted identifiers are also flattened if there's nesting.
+## backticks, then the backticks are removed. The accQuoted identifiers are also flattened if they're nested.
 ##
 ## Named Arguments
 ## ---------------
