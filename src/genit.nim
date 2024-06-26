@@ -12,6 +12,10 @@
 ## Rules
 ## =====
 ##
+## genit process nnkAccQuoted identifiers, i.e. backticks surrounding identifiers, to generate
+## substitutions into blocks of code. If the resulting accQuoted identifier is valid without
+## backticks, then the backticks are removed. The accQuoted identifiers are also flattened if there's nesting.
+##
 ## Named Arguments
 ## ---------------
 ## Named arguments are local to the gen call and substituted into the body.
@@ -352,7 +356,7 @@ runnableExamples:
 #     Modify tf functions for traversing the Context tree
 #     Modify `tfOp` for operations
 
-import std / [ macros, tables, strformat, genasts, strutils, options ]
+import std / [ macros, tables, strformat, genasts, strutils, options, sets ]
 from sequtils import anyIt
 
 #> Debug
@@ -388,6 +392,30 @@ macro print*(body: untyped): untyped =
       printFlag = false
 
 #< Debug
+
+# Used to check if a flattened, accQuoted identifier is valid
+const Keywords = ["addr", "and", "as", "asm", 
+"bind", "block", "break", 
+"case", "cast", "concept", "const", "continue", "converter",
+"defer", "discard", "distinct", "div", "do",
+"elif", "else", "end", "enum", "except", "export",
+"finally", "for", "from", "func", "if",
+"import", "in", "include", "interface", "is", "isnot", "iterator",
+"let",
+"macro", "method", "mixin", "mod",
+"nil", "not", "notin",
+"object", "of", "or", "out",
+"proc", "ptr",
+"raise", "ref", "return",
+"shl", "shr", "static",
+"template", "try", "tuple", "type",
+"using",
+"var",
+"when", "while",
+"xor",
+"yield"
+]
+const KeywordsSet = toHashSet(Keywords)
 
 const MacroTransformerName = "gen"
 const MacroTransformerWithName = "genWith"
@@ -521,7 +549,7 @@ proc parseIdentKind(n: NimNode): Context =
 
   for lhs, rhs in scope.named:
     if n.eqIdent(lhs):
-      #decho &"--ckNamed nnkIdent ({lhs} => {rhs.repr})"
+      #decho  &"--ckNamed nnkIdent ({lhs} => {rhs.repr})"
       return Context(nk: nnkIdent, kind: ckNamed, output: some(rhs))
 
   for lhs, rhs in globalNamed:
@@ -691,7 +719,8 @@ proc parsePrefix(n: NimNode): Context =
       of UppercasePrefix:
         Context(kind: ckNode, output: some(ident(child.output.get.strVal.toUpperAscii)))
       else:
-        error(&"parsePrefix unexpected '{prefix}'", n)
+        if true:
+          error(&"parsePrefix unexpected '{prefix}'", n)
         Context(kind: ckEmpty)
   else:
     parseMulti(n)
@@ -771,6 +800,32 @@ proc tfInner(c: Context): seq[Option[NimNode]] =
       result.add o
       #decho &"tfInner {result.repr = }"
 
+proc tfAccQuoted(c: Context): Option[NimNode] =
+  var n = newNimNode(c.nk)
+  var identStr: string
+  for child in c.children:
+    let childTfO = child.tf()
+    if childTfO.isSome:
+      let childTF: NimNode = childTfO.get
+      # check if child is accQuoted
+      if childTf.kind == nnkAccQuoted:
+        # flatten nnkAccQuoted
+        for child in childTf.children:
+          n.add child
+          identStr &= child.repr
+        #if true:
+          #error("Debugging tfAccQuoted child is nnkAccQuoted " & n.astGenRepr)
+      else:
+        n.add childTf
+        identStr &= childTf.repr
+  if identStr.validIdentifier and identStr.notin KeywordsSet:
+    #if true:
+    #  error("Debugging tfAccQuoted valid identifier " & identStr)
+    some(newIdentNode(identStr))
+  else:
+    #if true:
+    #  error("Debugging tfAccQuoted not valid identifier " & identStr)
+    some(n)
 
 proc tfGen(c: Context): Option[NimNode] =
   # pass in named and unnamed items into the call
@@ -907,6 +962,7 @@ proc tf(c: Context): Option[NimNode] =
     case c.kind:
     of ckIt: tfIt(c)
     of ckNamed: c.output
+    of ckAccQuoted: tfAccQuoted(c)
     of ckGen: tfGen(c)
     of ckOpTupleIndex..ckOpCapitalize:
       tfOp(c)
@@ -921,11 +977,14 @@ proc tf(c: Context): Option[NimNode] =
       var n = newNimNode(c.nk)
       for child in c.children:
         let childTf = child.tf()
-        if childTf.isSome: 
+        if childTf.isSome:
           n.add childTf.get
       some(n)
   else:
-    c.output
+    case c.kind:
+      of ckAccQuoted: tfAccQuoted(c)
+      else:
+        c.output
   #decho &"tf {result.treerepr}"
 #< AST Transformers
 
@@ -1116,9 +1175,10 @@ macro genWith*(x: typed, args:varargs[untyped]): untyped =
   of nnkTupleConstr: fieldsTupleConstr(x, ty)
   of nnkBracketExpr: fieldsBracket(x, ty)
   else:
-    error(&"Unexpected {ty.kind}\n{ty.treerepr}", x)
+    if true:
+      error(&"Unexpected {ty.kind}\n{ty.treerepr}", x)
     @[]
-  
+
   var tyArgName:NimNode
   if args.len > 1:
     for a in args[0 ..< ^1]:

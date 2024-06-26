@@ -1,6 +1,7 @@
-import std / [unittest, strformat, macros, genasts]
-
+import std / [unittest]
 import genit
+
+{.hint[XDeclaredButNotUsed]:off.}
 
 test "no args":
   gen:
@@ -61,15 +62,36 @@ type
     r, g, b: uint8
 
 test "accQuoted":
+
   gen(v = value):
     var `v`: int = 1
-  
+
   check declared(value)
 
   gen red, green, blue:
     var `it State1`: State1 
 
   check declared(redState1)
+
+  # test keywords in accquoting (flattening)
+  gen `var`:
+    var `it`: State1
+  
+  check declared(`var`)
+
+  gen `var`:
+    var `it KeywordState`: State1
+  
+  check declared(varKeywordState)
+
+  var x = 0
+  var y = 0
+  gen (x, `-=`, 1), (y, `+=`, 1):
+    it[1](it[0], it[2])
+
+  check x == -1
+  check y == 1
+
 
 test "unnamed args / enum":
   gen(c = Color):
@@ -94,7 +116,7 @@ test "mixed named and unnamed args":
   greenState2.aComponent = 100 
   greenState2.cComponent = 300 
 
-  gen(c = component, g = greenState, a, c):
+  gen(c = Component, g = greenState, a, c):
     `g 1`.`it c` = `g 2`.`it c` 
   
   check greenState1.aComponent == 100
@@ -567,7 +589,6 @@ test "it on type":
     type TableModelVariant = ref object
       case kind: TableModelKind
       of TableModelKind.`tmk it`: it: SomeMode
-      else: nil
 
   check declared(Foo)
   check declared(Bar)

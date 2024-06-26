@@ -16,9 +16,9 @@ gen red, green, blue:
 
 Produces:
 ``` nim
-const `red tag` = TM_STATIC_HASH("color_" & "red")
-const `green tag` = TM_STATIC_HASH("color_" & "green")
-const `blue tag` = TM_STATIC_HASH("color_" & "blue")
+const redtag = TM_STATIC_HASH("color_" & "red")
+const greentag = TM_STATIC_HASH("color_" & "green")
+const bluetag = TM_STATIC_HASH("color_" & "blue")
 ```
 
 ---
@@ -35,16 +35,16 @@ gen(c = component):
 Produces:
 
 ```nim
-  s.`mover component` = entity_api.`lookup component type`(s.entity_ctx, `TM_TT_TYPE_HASH_PHYSX_MOVER component`)
-  s.`physics_joint component` = entity_api.`lookup component type`(s.entity_ctx, `TM_TT_TYPE_HASH physics_joint component`)
-  s.`physics_shape component` = entity_api.`lookup component type`(s.entity_ctx, `TM_TT_TYPE_HASH physics_shape component`)
-  s.`physx_joint component` = entity_api.`lookup component type`(s.entity_ctx, `TM_TT_TYPE_HASH physx_joint component`)
-  s.`physx_rigid_body component` = entity_api.`lookup component type`(s.entity_ctx, `TM_TT_TYPE_HASH physx_rigid_body component`)
-  s.`tag component` = entity_api.`lookup component type`(s.entity_ctx, `TM_TT_TYPE_HASH tag component`)
-  s.`transform component` = entity_api.`lookup component type`(s.entity_ctx, `TM_TT_TYPE_HASH transform component`)
+  s.movercomponent = entity_api.lookupcomponenttype(s.entity_ctx, TM_TT_TYPE_HASH_PHYSX_MOVERcomponent)
+  s.physics_jointcomponent = entity_api.lookupcomponenttype(s.entity_ctx, TM_TT_TYPE_HASH physics_jointcomponent)
+  s.physics_shapecomponent = entity_api.lookupcomponenttype(s.entity_ctx, TM_TT_TYPE_HASHphysics_shapecomponent)
+  s.physx_jointcomponent = entity_api.lookupcomponenttype(s.entity_ctx, TM_TT_TYPE_HASHphysx_jointcomponent)
+  s.physx_rigid_bodycomponent = entity_api.lookupcomponenttype(s.entity_ctx, TM_TT_TYPE_HASH physx_rigid_bodycomponent)
+  s.tagcomponent = entity_api.lookupcomponenttype(s.entity_ctx, TM_TT_TYPE_HASHtagcomponent)
+  s.transformcomponent = entity_api.lookupcomponenttype(s.entity_ctx, TM_TT_TYPE_HASHtransformcomponent)
 
-  s.`trans man` = cast[ptr `tm transform component manager_o`](entity_api.`component manager`(s.entity_ctx, s.`transform component`))
-  s.`tag man` = cast[ptr `tm tag component manager_o`](entity_api.`component manager`(s.entity_ctx, s.`tag component`))
+  s.transman = cast[ptr tmtransformcomponentmanager_o](entity_api.componentmanager(s.entity_ctx, s.transformcomponent))
+  s.tagman = cast[ptr tmtagcomponentmanager_o](entity_api.componentmanager(s.entity_ctx, s.tagcomponent))
 ```
 ---
 
