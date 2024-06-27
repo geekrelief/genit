@@ -1,5 +1,6 @@
 # genit
-Nim macro(s) that implements a small DSL that works like an inline proc but for templates which can be used to inline, repetitive code while hopefully improving intent and maintainablity at the cost of clarity. The examples below show a reduction of 50-66% in code size.
+Genit is a Nim macro(s) works like an inline template. It implements a DSL to help you produce lots of repetitive code.
+This is an experiment to see if we eliminate copy-paste errors and increase maintainablity at the cost of a little clarity.
 
 ---
 
@@ -9,6 +10,8 @@ https://geekrelief.github.io/genit/
 ---
 ### Examples
 ---
+
+Basic example with unnamed arguments:
 ```nim
 gen red, green, blue:
   const `it tag` = TM_STATIC_HASH("color_" & $$it)
@@ -22,6 +25,8 @@ const bluetag = TM_STATIC_HASH("color_" & "blue")
 ```
 
 ---
+
+Here we can nest `gen` calls:
 ```nim
 gen(c = component):
   s.`mover c` = entity_api.`lookup c type`(s.entity_ctx, `TM_TT_TYPE_HASH_PHYSX_MOVER c`)
@@ -33,7 +38,6 @@ gen(c = component):
 ```
 
 Produces:
-
 ```nim
   s.movercomponent = entity_api.lookupcomponenttype(s.entity_ctx, TM_TT_TYPE_HASH_PHYSX_MOVERcomponent)
   s.physics_jointcomponent = entity_api.lookupcomponenttype(s.entity_ctx, TM_TT_TYPE_HASH physics_jointcomponent)
@@ -48,6 +52,7 @@ Produces:
 ```
 ---
 
+Using operations in backticks:
 ```nim
   gen (A, `-=`, x), (D, `+=`, x), (W, `-=`, z), (S, `+=`, z):
     if s.input.held_keys[`TM_INPUT_KEYBOARD_ITEM it[0]`]:
@@ -64,4 +69,28 @@ Produces:
     `-=`(local_movement.z, 1.0f)
   if s.input.held_keys[TM_INPUT_KEYBOARD_ITEM_S]:
     `+=`(local_movement.z, 1.0f)
+```
+
+---
+
+Wrap them in templates for macro-like power:
+```nim
+template genTransceiverComponent(name, typ: untyped): untyped {.dirty.} =
+  gen (name, typ):
+    CreateTransceiverComponent(`U it[0] SignalTransceiver`, `FOn it[0] SignalDelegate`, it[1], $$it[0])
+
+genTransceiverComponent(Name, FName)
+genTransceiverComponent(String, FString)
+genTransceiverComponent(Integer, int)
+genTransceiverComponent(Float, float)
+genTransceiverComponent(Vector, FVector)
+```
+
+Produces:
+```nim
+CreateTranscieverComponent(UNameSignalTransceiver, FOnNameSignalDelegate, FName, "Name")
+CreateTranscieverComponent(UStringSignalTransceiver, FOnStringSignalDelegate, FString, "String")
+CreateTranscieverComponent(UIntegerSignalTransceiver, FOnIntegerSignalDelegate, int, "Integer")
+CreateTranscieverComponent(UFloatSignalTransceiver, FOnFloatSignalDelegate, float, "Float")
+CreateTranscieverComponent(UVectorSignalTransceiver, FOnVectorSignalDelegate, FVector, "Vector")
 ```

@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.16.0
+## :Version: 0.17.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -293,6 +293,23 @@ runnableExamples:
     var color = RGB(`red c`:1.0, `green c`:0.0, `blue c`:1.0)
 
   doAssert color.redComponent == 1
+
+##
+## Using with Templates
+## ---------------------------
+## We can give templates macro-like powers without having to write macros!
+## Set the return type to `untyped` if you're going to use the template in an expression.
+## Mark the template with the `{.dirty.}` pragma to avoid early binding of symbols.
+##
+runnableExamples:
+  template joinSymToString(arg1, arg2: untyped): untyped {.dirty.} =
+    gen (arg1, arg2):
+      $$it[0] & " " & $$it[1]
+
+  let msg:string = joinSymToString(hi, [5])
+
+  doAssert msg == "hi [5]"
+
 ##
 ## Special Constructs
 ## ------------------
@@ -345,6 +362,10 @@ runnableExamples:
   gen(1, 2, 3):
     sum += it
   doAssert sum == 12
+
+
+
+
 #
 # implementation
 # To extend the DSL: 
@@ -380,6 +401,7 @@ proc decho(count:int, msg:string) {.compileTime, used.} =
 proc decho(msg:string) {.compileTime, used.} =
   decho 0, msg
 
+
 var printFlag {.compileTime.} = false
 macro print*(body: untyped): untyped =
   echo body.treeRepr
@@ -391,6 +413,13 @@ macro print*(body: untyped): untyped =
     static:
       printFlag = false
 
+# calls debugEcho with the lineInfo
+macro here(x: varargs[typed, `$`]):untyped {.noSideEffect, used.} =
+  {.cast(noSideEffect), warning[Deprecated]:off.}:
+    result = newTree(nnkCommand, ident "debugEcho")
+    result.add newStrLitNode("=== " & x[0].lineInfo & " : " & callsite().toStrLit().strVal & " ===\n")
+    for c in x:
+      result.add c
 #< Debug
 
 # Used to check if a flattened, accQuoted identifier is valid
@@ -690,7 +719,7 @@ proc parseBracketExpr(n: NimNode): Context =
   result.propHasItem()
 
 proc parsePrefix(n: NimNode): Context =
-  #decho &"parsePrefix {n.repr}"
+  #here &"parsePrefix {n.repr}"
   var prefix = n[0].strVal
   var exp = n[1]
   if prefix in Operators:
@@ -749,7 +778,7 @@ proc parseTypeDef(n: NimNode): Context =
 
 
 proc parseNode(n: NimNode): Context =
-  #decho &"enter parseNode {n.kind} {n.repr}"
+  #here &"enter parseNode {n.kind} {n.repr}"
   result = case n.kind:
     of LitKinds: parseLitKind(n)
     of nnkCall, nnkCommand:
@@ -758,7 +787,7 @@ proc parseNode(n: NimNode): Context =
       else:
         parseMulti(n)
     of nnkAccQuoted: parseAccQuoted(n)
-    of nnkBracketExpr: parseBracketExpr(n)
+    of nnkBracketExpr: parseBracketExpr(n) # note this breaks if gen is inside a template it turns into an nnkCall wrapping a nnkOpenSymChoice. Mark the template {.dirty.} and it works.
     of nnkPrefix: parsePrefix(n)
     of nnkVarSection, nnkLetSection, nnkConstSection, nnkTypeSection: 
       parseSection(n)
@@ -1207,3 +1236,15 @@ macro genWith*(x: typed, args:varargs[untyped]): untyped =
     echo result.repr
     echo "-----"
 #< == it over type fields
+
+#[
+when isMainModule:
+# testing templates
+  static:
+    template joinSymToString(arg1, arg2: untyped): untyped {.dirty.} =
+      gen (arg1, arg2):
+        $$it[0] & " " & $$it[1]
+
+    let msg:string = joinSymToString(hi, [5])
+    echo msg
+]#

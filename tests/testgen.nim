@@ -51,6 +51,15 @@ test "nested, renamed":
   
   check sum == 22
 
+test "templates":
+  template joinSymToString(arg1, arg2: untyped):untyped {.dirty.} =
+    gen (arg1, arg2):
+      $$it[0] & " " & $$it[1]
+
+  let msg = joinSymToString(hi, [5])
+
+  check msg == "hi [5]"
+
 type 
   State1 = object
     aComponent, bComponent, cComponent, dComponent: int
