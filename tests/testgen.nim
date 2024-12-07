@@ -16,6 +16,15 @@ test "bracket":
 
   check a == 300
 
+test "pointer deref":
+  let arr = [100,200,300]
+  var a: ptr int = cast[ptr int](cast[int](arr.addr) + sizeof(int))
+  var b: int
+  gen:
+    b = a[]
+  check b == 200
+
+
 test "basic items":
   var sum = 0
   gen 1, 2:

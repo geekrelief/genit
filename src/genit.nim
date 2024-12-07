@@ -1,6 +1,6 @@
 ## :Author: Don-Duong Quach
 ## :License: MIT
-## :Version: 0.17.0
+## :Version: 0.18.0
 ##
 ## `Source <https://github.com/geekrelief/genit/>`_
 ##
@@ -708,13 +708,14 @@ proc parseBracketExpr(n: NimNode): Context =
   #  if yes then ContextKind is ckOpTupleIndex
   #  else ckNode
   var first = parseNode(n[0])
-  var second = parseNode(n[1])
   
-  if first.hasItem and not first.isAccQuoted:
-    result = Context(kind: ckOpTupleIndex, nk: n.kind, tupleIndex: second.output.get.intVal.int, children: @[first])
+  if first.hasItem and not first.isAccQuoted and n.len > 1:
+    var tupleIndexContext = parseNode(n[1]) # if there's an index, if no index, then n is a pointer dereference
+    result = Context(kind: ckOpTupleIndex, nk: n.kind, tupleIndex: tupleIndexContext.output.get.intVal.int, children: @[first])
   else:
     # array[..it..], array[expr], array[IntLit, T]
     # `it[1]`[0] # first is accQuoted, so we ignore the following indexing
+    # or it[] # the bracketExpr is a pointer dereference
     result = parseMulti(n)
   result.propHasItem()
 
